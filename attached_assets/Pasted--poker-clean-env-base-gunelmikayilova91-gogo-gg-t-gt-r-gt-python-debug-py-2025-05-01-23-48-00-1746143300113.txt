@@ -1,0 +1,45 @@
+(poker_clean_env) (base) gunelmikayilova91@gogo:~/gg/t/gt/r/gt$ python debug.py
+2025-05-01 23:48:00,795 - poker_debug - INFO - Checking dependencies...
+2025-05-01 23:48:00,800 - poker_debug - INFO - ==================================================
+2025-05-01 23:48:00,800 - poker_debug - INFO - Poker RL System Diagnostics
+2025-05-01 23:48:00,800 - poker_debug - INFO - ==================================================
+2025-05-01 23:48:00,800 - poker_debug - INFO - 
+--- Checking Dependencies ---
+2025-05-01 23:48:00,939 - poker_debug - INFO - ✓ numpy version 1.24.3
+2025-05-01 23:48:01,202 - poker_debug - INFO - ✓ ray version 2.10.0
+2025-05-01 23:48:02,434 - poker_debug - INFO - ✓ torch version 2.0.1+cu117
+2025-05-01 23:48:02,470 - poker_debug - WARNING - ✗ gymnasium version 0.28.1 is below recommended 0.29.1
+2025-05-01 23:48:02,483 - poker_debug - INFO - ✓ pyspiel version Unknown
+2025-05-01 23:48:02,483 - poker_debug - INFO - ✓ open_spiel version Unknown
+2025-05-01 23:48:03,506 - poker_debug - INFO - ✓ wandb version 0.19.10
+2025-05-01 23:48:03,506 - poker_debug - WARNING - Not all dependencies are properly installed!
+2025-05-01 23:48:03,507 - poker_debug - INFO - 
+--- Checking System Info ---
+2025-05-01 23:48:03,507 - poker_debug - INFO - System Information:
+2025-05-01 23:48:03,507 - poker_debug - INFO - OS: Linux 5.10.0-34-cloud-amd64
+2025-05-01 23:48:03,507 - poker_debug - INFO - Python: 3.10.15
+2025-05-01 23:48:03,507 - poker_debug - INFO - Memory: 83.48 GB total, 81.82 GB available
+2025-05-01 23:48:03,508 - poker_debug - INFO - CPU: 6 physical cores, 12 logical cores
+2025-05-01 23:48:03,508 - poker_debug - INFO - NVIDIA driver: NVRM version: NVIDIA UNIX Open Kernel Module for x86_64  550.90.07  Release Build  (dvs-builder@U16-I2-C05-15-3)  Fri May 31 09:44:37 UTC 2024
+GCC version:  gcc version 10.2.1 20210110 (Debian 10.2.1-6)
+2025-05-01 23:48:03,508 - poker_debug - INFO - Disk: 147.40 GB total, 80.50 GB free
+2025-05-01 23:48:03,508 - poker_debug - INFO - 
+--- Checking GPU ---
+2025-05-01 23:48:03,700 - poker_debug - INFO - PyTorch CUDA available: True
+2025-05-01 23:48:03,729 - poker_debug - INFO - GPU count: 1
+2025-05-01 23:48:03,734 - poker_debug - INFO - GPU 0: NVIDIA A100-SXM4-40GB
+2025-05-01 23:48:03,735 - poker_debug - INFO - GPU 0 memory: 39.38 GB total, 0.00 GB reserved, 0.00 GB allocated
+2025-05-01 23:48:03,735 - poker_debug - INFO - 
+--- Testing Ray ---
+2025-05-01 23:48:06,737 INFO worker.py:1752 -- Started a local Ray instance.
+2025-05-01 23:48:07,101 - poker_debug - INFO - Ray initialized with resources: {'CPU': 1.0, 'memory': 52903954023.0, 'GPU': 1.0, 'accelerator_type:A100': 1.0, 'node:10.128.0.12': 1.0, 'object_store_memory': 26451977011.0, 'node:__internal_head__': 1.0}
+2025-05-01 23:48:07,639 - poker_debug - INFO - Ray actor test: pong from gogo
+2025-05-01 23:48:08,550 - poker_debug - INFO - Ray test completed and shut down successfully
+2025-05-01 23:48:08,551 - poker_debug - INFO - 
+--- Testing OpenSpiel ---
+2025-05-01 23:48:08,565 - poker_debug - INFO - OpenSpiel registered games count: 101
+2025-05-01 23:48:08,566 - poker_debug - INFO - Found universal_poker game: universal_poker
+2025-05-01 23:48:08,566 - poker_debug - INFO - Default parameters: True
+only read 2 board card numbers, need 4
+Segmentation fault
+(poker_clean_env) (base) gunelmikayilova91@gogo:~/gg/t/gt/r/gt$ 

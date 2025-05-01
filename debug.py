@@ -178,7 +178,7 @@ def test_open_spiel():
             
         # Try to create a simple game to test
         try:
-            test_game = pyspiel.load_game("universal_poker(betting=nolimit,numPlayers=2,numRounds=4,blind=1 2,stack=1000 1000)")
+            test_game = pyspiel.load_game("universal_poker(betting=nolimit,numPlayers=2,numRounds=4,numBoardCards=0 3 1 1,blind=1 2,stack=1000 1000)")
             logger.info(f"Test game created successfully: {test_game}")
             
             # Test RL environment
@@ -203,7 +203,8 @@ def test_custom_environment():
         # Try to import from current directory
         sys.path.append('.')
         from config import PokerConfig
-        from environment import PokerEnv
+        # Используем исправленное окружение
+        from environment_fixed import PokerEnv
         
         logger.info("Testing custom poker environment...")
         
@@ -211,8 +212,15 @@ def test_custom_environment():
         config = PokerConfig()
         config.num_players = 2  # Use smaller game for testing
         
-        # Create environment
-        env_config = {"config": config}
+        # Create environment с правильным форматом env_config
+        env_config = {
+            "game_name": config.game_name,
+            "num_players": config.num_players,
+            "starting_stack": config.starting_stack,
+            "small_blind": config.small_blind,
+            "big_blind": config.big_blind,
+            "game_config": config.game_config,
+        }
         env = PokerEnv(env_config)
         
         logger.info(f"Environment created successfully, action space: {env.action_space}")
@@ -238,7 +246,7 @@ def test_model():
         from ray.rllib.models.modelv2 import ModelV2
         
         # Try to import our model
-        from models import AdvancedPokerModel
+        from models_fixed import AdvancedPokerModel
         
         logger.info("Testing model definition...")
         
