@@ -1,431 +1,385 @@
-# train_fixed.py
-"""
-Fixed version of the Poker training script with memory optimizations
-and improved error handling for reliable training on VPS environments.
-"""
 import argparse
-import os
-import logging
-import gc
-import time
+import functools
 import json
-from pathlib import Path
+import logging
+import os
+import sys
+import time
+import traceback
+from datetime import datetime
+from functools import wraps
+from typing import Dict, Any, Optional, Union
+
 import numpy as np
 import psutil
-
 import ray
-from ray import tune
+from ray import air, tune
 from ray.rllib.algorithms.ppo import PPOConfig
-from ray.rllib.models import ModelCatalog
+from ray.tune import Tuner
 
-# Import configuration and environment
-from config import PokerConfig, TrainingConfig
-from environment_fixed import PokerEnv
-from models import AdvancedPokerModel
-
-# Import memory tracking utilities
 try:
-    from utils.memory_tracker import MemoryTracker, monitor_training_memory
-except ImportError:
-    # Fallback if utils not available
-    def monitor_training_memory(func):
-        return func
-    MemoryTracker = None
+    # Попытка импорта из локальных файлов, с обработкой ошибок
+    from config import PokerConfig, TrainingConfig
+    from environment_fixed import PokerEnv, create_poker_env
+    from loggers import WandbLoggerCallback
+except ImportError as e:
+    print(f"Error importing modules: {e}")
+    print("Make sure all required files are in the correct locations.")
+    sys.exit(1)
 
-# Set up logging
-log_format = '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+# Настройка логирования
+logger = logging.getLogger("main")
 logging.basicConfig(
     level=logging.INFO,
-    format=log_format,
-    handlers=[
-        logging.StreamHandler(),
-        logging.FileHandler('train.log')
-    ]
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
-logger = logging.getLogger("poker_training")
+
+def monitor_training_memory(func):
+    """
+    Декоратор для мониторинга использования памяти во время обучения.
+    """
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+        process = psutil.Process(os.getpid())
+        start_mem = process.memory_info().rss / 1024 / 1024  # МБ
+        start_time = time.time()
+        
+        logger.info(f"Starting {func.__name__} with memory usage: {start_mem:.2f} MB")
+        
+        try:
+            result = func(*args, **kwargs)
+            
+            end_mem = process.memory_info().rss / 1024 / 1024  # МБ
+            elapsed_time = time.time() - start_time
+            
+            logger.info(f"Finished {func.__name__} in {elapsed_time:.2f} seconds")
+            logger.info(f"Memory usage: {end_mem:.2f} MB (delta: {end_mem - start_mem:.2f} MB)")
+            
+            return result
+        except Exception as e:
+            logger.error(f"Error in {func.__name__}: {e}")
+            logger.error(traceback.format_exc())
+            raise
+    
+    return wrapper
 
 def create_env(env_config):
-    """Factory function for creating environment instances."""
-    return PokerEnv(env_config)
+    """Фабричная функция для создания экземпляров среды."""
+    try:
+        return PokerEnv(env_config)
+    except Exception as e:
+        logger.error(f"Error creating environment: {e}")
+        logger.error(traceback.format_exc())
+        raise
 
 def get_available_resources():
-    """Get information about available system resources."""
+    """Получает информацию о доступных системных ресурсах."""
+    cpu_count = psutil.cpu_count(logical=False) or psutil.cpu_count()
+    total_memory_gb = psutil.virtual_memory().total / (1024 ** 3)
+    
+    # Проверка наличия GPU через ray
     try:
-        memory = psutil.virtual_memory()
-        cpu_count = psutil.cpu_count(logical=False) or psutil.cpu_count()
-        
-        resources = {
-            "memory_total_gb": memory.total / (1024**3),
-            "memory_available_gb": memory.available / (1024**3),
-            "cpu_count": cpu_count,
-            "memory_percent": memory.percent
-        }
-        
-        logger.info(f"Available resources: {resources}")
-        return resources
-    except Exception as e:
-        logger.error(f"Error getting system resources: {e}")
-        return {
-            "memory_available_gb": 4.0,  # Conservative default
-            "cpu_count": 2             # Conservative default
-        }
+        if not ray.is_initialized():
+            ray.init(ignore_reinit_error=True)
+        gpu_ids = ray.get_gpu_ids()
+        num_gpus = len(gpu_ids)
+    except Exception:
+        num_gpus = 0
+    
+    return {
+        "cpu_count": cpu_count,
+        "total_memory_gb": total_memory_gb,
+        "num_gpus": num_gpus
+    }
 
-def optimize_config_for_resources(train_cfg):
-    """Adjust training configuration based on available resources."""
+def optimize_config_for_resources(train_cfg: TrainingConfig):
+    """Оптимизирует конфигурацию обучения на основе доступных ресурсов."""
     resources = get_available_resources()
     
-    # Only modify if we're resource constrained
-    if resources["memory_available_gb"] < 8.0 or resources["cpu_count"] < 4:
-        logger.warning("Limited resources detected, optimizing configuration...")
+    # Расчет оптимального количества воркеров
+    cpu_count = resources["cpu_count"]
+    memory_gb = resources["total_memory_gb"]
+    num_gpus = resources["num_gpus"]
+    
+    logger.info(f"Available resources: {cpu_count} CPU cores, {memory_gb:.2f} GB RAM, {num_gpus} GPUs")
+    
+    # Резервируем 1 CPU для основного потока и системы
+    available_cpus = max(1, cpu_count - 1)
+    
+    # Настройка для CPU-only
+    if num_gpus == 0:
+        logger.info("No GPUs detected, optimizing for CPU-only training")
+        # Уменьшаем размер batch и количество SGD итераций для CPU
+        train_cfg.train_batch_size = min(train_cfg.train_batch_size, 2048)
+        train_cfg.sgd_minibatch_size = min(train_cfg.sgd_minibatch_size, 512)
+        train_cfg.num_sgd_iter = min(train_cfg.num_sgd_iter, 5)
         
-        # Reduce workers based on CPU count (leave 1 for system)
-        max_workers = max(1, resources["cpu_count"] - 1)
-        if train_cfg.num_workers > max_workers:
-            logger.info(f"Reducing workers from {train_cfg.num_workers} to {max_workers}")
-            train_cfg.num_workers = max_workers
-        
-        # Reduce batch size if memory is limited
-        if resources["memory_available_gb"] < 6.0 and train_cfg.train_batch_size > 4096:
-            new_batch_size = 4096
-            logger.info(f"Reducing train_batch_size from {train_cfg.train_batch_size} to {new_batch_size}")
-            train_cfg.train_batch_size = new_batch_size
-            
-            # Adjust SGD minibatch size too
-            new_sgd_size = min(train_cfg.sgd_minibatch_size, new_batch_size // 4)
-            logger.info(f"Reducing sgd_minibatch_size from {train_cfg.sgd_minibatch_size} to {new_sgd_size}")
-            train_cfg.sgd_minibatch_size = new_sgd_size
-        
-        # Use lower precision if very memory constrained
-        if resources["memory_available_gb"] < 4.0:
-            logger.info("Enabling mixed precision training to save memory")
-            os.environ["MIXED_PRECISION"] = "1"  # Will be used to set precision in model
+        # Ограничиваем количество воркеров на маломощных машинах
+        if memory_gb < 8:
+            logger.warning("Low memory detected, reducing resource usage")
+            train_cfg.num_workers = min(2, available_cpus)
+            train_cfg.train_batch_size = min(train_cfg.train_batch_size, 1024)
+        else:
+            train_cfg.num_workers = min(train_cfg.num_workers, available_cpus)
+    else:
+        # С GPU можем использовать больше воркеров и большие батчи
+        train_cfg.num_gpus = min(train_cfg.num_gpus, num_gpus)
+        if train_cfg.num_gpus > 0:
+            # Резервируем GPU для основного процесса
+            available_gpus = num_gpus - train_cfg.num_gpus
+            if available_gpus > 0:
+                train_cfg.num_gpus_per_worker = available_gpus / train_cfg.num_workers
+    
+    # Ограничиваем количество env на worker для экономии памяти
+    train_cfg.num_envs_per_worker = min(train_cfg.num_envs_per_worker, 2)
+    
+    logger.info(f"Optimized configuration: workers={train_cfg.num_workers}, "
+                f"batch_size={train_cfg.train_batch_size}, "
+                f"sgd_batch={train_cfg.sgd_minibatch_size}, "
+                f"sgd_iter={train_cfg.num_sgd_iter}")
     
     return train_cfg
 
 def setup_ray(log_level="INFO"):
-    """Initialize Ray with proper error handling."""
-    if ray.is_initialized():
-        logger.info("Ray is already initialized. Shutting down and reinitializing...")
-        ray.shutdown()
-    
+    """Инициализирует Ray с обработкой ошибок."""
     try:
-        # Start with minimal resources to avoid overcommitting
+        # Проверяем, инициализирован ли Ray
+        if ray.is_initialized():
+            ray.shutdown()
+        
+        # Инициализируем Ray
         ray.init(
             logging_level=log_level,
             log_to_driver=True,
-            # Configure object store to prevent out-of-memory issues
-            object_store_memory=None,  # Let Ray auto-configure
-            _memory=None,              # Let Ray auto-configure
-            # Add useful system metrics
-            include_dashboard=False
+            ignore_reinit_error=True,
         )
         
-        logger.info("Ray initialized successfully")
-        logger.info(f"Ray cluster resources: {ray.cluster_resources()}")
+        logger.info(f"Ray initialized successfully. Dashboard URL: {ray.get_webui_url()}")
         return True
     except Exception as e:
-        logger.error(f"Failed to initialize Ray: {e}", exc_info=True)
-        
-        # Try with more conservative settings
-        try:
-            # Calculate conservative memory limit (50% of available)
-            memory = psutil.virtual_memory()
-            conservative_memory = int(memory.available * 0.5)
-            
-            logger.info(f"Trying conservative Ray initialization with {conservative_memory/(1024**3):.2f} GB memory limit")
-            
-            ray.init(
-                logging_level=log_level,
-                log_to_driver=True,
-                object_store_memory=int(conservative_memory * 0.5),
-                _memory=int(conservative_memory * 0.5),
-                include_dashboard=False
-            )
-            
-            logger.info("Ray initialized with conservative settings")
-            logger.info(f"Ray cluster resources: {ray.cluster_resources()}")
-            return True
-        except Exception as e2:
-            logger.error(f"Conservative Ray initialization failed: {e2}", exc_info=True)
-            return False
+        logger.error(f"Failed to initialize Ray: {e}")
+        logger.error(traceback.format_exc())
+        return False
 
 def get_best_checkpoint(analysis, metric="episode_reward_mean"):
-    """Safely retrieve the best checkpoint from analysis."""
+    """Безопасно получает лучший чекпоинт из результатов анализа."""
     try:
-        if not analysis.trials:
-            logger.warning("No trials completed, cannot get best checkpoint")
-            return None
-            
-        # Try evaluation metric first
-        eval_metric = "evaluation/episode_reward_mean"
-        best_trial = analysis.get_best_trial(eval_metric, mode="max", scope="last")
-        
-        if not best_trial:
-            # Fall back to training metric
-            best_trial = analysis.get_best_trial(metric, mode="max", scope="last")
-            
-        if not best_trial:
-            logger.warning(f"Could not find best trial using metrics {eval_metric} or {metric}")
-            return None
-            
-        logger.info(f"Best trial: {best_trial.trial_id}")
-        
-        # Get best checkpoint for this trial
-        checkpoint_result = analysis.get_best_checkpoint(
-            trial=best_trial,
-            metric=metric,
-            mode="max"
-        )
-        
-        if checkpoint_result:
-            checkpoint_path = getattr(checkpoint_result, 'path', str(checkpoint_result))
-            logger.info(f"Best checkpoint path: {checkpoint_path}")
-            return checkpoint_path
-        else:
-            logger.warning(f"No checkpoint for best trial {best_trial.trial_id}")
-            return None
+        if analysis and hasattr(analysis, "get_best_checkpoint"):
+            return analysis.get_best_checkpoint(metric=metric, mode="max")
+        logger.warning("Analysis object doesn't support get_best_checkpoint method")
+        return None
     except Exception as e:
         logger.error(f"Error getting best checkpoint: {e}")
         return None
 
 @monitor_training_memory
 def train_poker(poker_cfg: PokerConfig, train_cfg: TrainingConfig):
-    """Main training function."""
-    logger.info("=== Starting Poker RL Training ===")
+    """
+    Основная функция обучения.
     
-    # Check & optimize resources
-    train_cfg = optimize_config_for_resources(train_cfg)
-    
-    # Register custom model
-    try:
-        ModelCatalog.register_custom_model("AdvancedPokerModel", AdvancedPokerModel)
-        logger.info(f"Custom model '{poker_cfg.model_config['custom_model']}' registered successfully")
-    except Exception as e:
-        logger.error(f"Failed to register custom model: {e}", exc_info=True)
-        raise
-    
-    # Initialize Ray
+    Args:
+        poker_cfg: Конфигурация покерной среды
+        train_cfg: Конфигурация процесса обучения
+    """
+    # Инициализация Ray
     if not setup_ray(train_cfg.log_level):
-        logger.error("Ray initialization failed, cannot continue")
-        return None
+        logger.error("Failed to initialize Ray. Exiting.")
+        return
     
-    # Configure environment
-    env_creator_config = {"config": poker_cfg, "dtype": np.float32}
-    
-    # Configure algorithm with memory efficiency optimizations
-    algo_config = (
-        PPOConfig()
-        .environment(env=PokerEnv, env_config=env_creator_config)
-        .framework("torch")
-        .resources(
-            num_gpus=train_cfg.num_gpus,
-            num_cpus_per_worker=train_cfg.num_cpus_per_worker,
-            num_gpus_per_worker=train_cfg.num_gpus_per_worker,
-        )
-        .rollouts(
-            num_rollout_workers=train_cfg.num_workers,
-            num_envs_per_worker=train_cfg.num_envs_per_worker,
-            rollout_fragment_length=train_cfg.rollout_fragment_length,
-            batch_mode=train_cfg.batch_mode,
-        )
-        .training(
-            gamma=train_cfg.gamma,
-            lr=train_cfg.lr,
-            lambda_=train_cfg.lambda_,
-            clip_param=train_cfg.clip_param,
-            vf_loss_coeff=train_cfg.vf_loss_coeff,
-            entropy_coeff=train_cfg.entropy_coeff,
-            train_batch_size=train_cfg.train_batch_size,
-            sgd_minibatch_size=train_cfg.sgd_minibatch_size,
-            num_sgd_iter=train_cfg.num_sgd_iter,
-            model=train_cfg.model,
-            # Memory optimization: use lower float precision if enabled
-            _use_trajectory_view_api=True,  # More memory efficient
-        )
-        .evaluation(
-            evaluation_interval=train_cfg.evaluation_interval,
-            evaluation_duration=train_cfg.evaluation_duration,
-            evaluation_num_workers=train_cfg.evaluation_num_workers,
-            evaluation_parallel_to_training=train_cfg.evaluation_parallel_to_training,
-            evaluation_config=PPOConfig.overrides(**train_cfg.evaluation_config)
-        )
-        .debugging(log_level=train_cfg.log_level)
-        # Add fault tolerance: save checkpoints frequently
-        .checkpoint(
-            checkpoint_frequency=train_cfg.checkpoint_freq,
-            checkpoint_at_end=train_cfg.checkpoint_at_end,
-            keep_checkpoints_num=train_cfg.keep_checkpoints_num
-        )
-    )
-    
-    # Create output directory
-    exp_dir = Path(train_cfg.local_dir) / train_cfg.exp_name
-    exp_dir.mkdir(parents=True, exist_ok=True)
-    
-    # Save configuration for reproducibility
-    with open(exp_dir / "train_config.json", "w") as f:
-        config_dict = {k: v for k, v in train_cfg.__dict__.items() 
-                      if not k.startswith("_") and not callable(v)}
-        json.dump(config_dict, f, indent=2, default=str)
-    
-    # Configure logger callback
-    callbacks = [
-        tune.logger.TBXLoggerCallback(),
-    ]
-    
-    # Add WandB callback if requested
-    if hasattr(train_cfg, 'wandb_project') and train_cfg.wandb_project:
-        try:
-            from loggers import WandbLoggerCallback
+    try:
+        # Оптимизация конфигурации под доступные ресурсы
+        train_cfg = optimize_config_for_resources(train_cfg)
+        
+        # Формирование конфигурации среды из poker_cfg
+        env_config = {
+            "game_name": poker_cfg.game_name,
+            "num_players": poker_cfg.num_players,
+            "starting_stack": poker_cfg.starting_stack,
+            "small_blind": poker_cfg.small_blind,
+            "big_blind": poker_cfg.big_blind,
+            "game_config": poker_cfg.game_config,
+        }
+        
+        # Создание и валидация тестовой среды
+        logger.info("Creating test environment to validate configuration")
+        test_env = create_env(env_config)
+        observation_space = test_env.observation_space
+        action_space = test_env.action_space
+        logger.info(f"Environment initialized with: obs_space={observation_space}, action_space={action_space}")
+        
+        # Получение размера наблюдения и количества действий
+        if hasattr(observation_space, "spaces") and "obs" in observation_space.spaces:
+            obs_size = int(np.prod(observation_space.spaces["obs"].shape))
+        else:
+            obs_size = int(np.prod(observation_space.shape))
+        
+        num_actions = action_space.n
+        logger.info(f"Observation size: {obs_size}, Number of actions: {num_actions}")
+        
+        # Подготовка callbacks для обучения
+        callbacks = []
+        if train_cfg.wandb_project:
             callbacks.append(
                 WandbLoggerCallback(
                     project=train_cfg.wandb_project,
                     log_config=True,
                 )
             )
-            logger.info(f"WandB logging enabled for project: {train_cfg.wandb_project}")
-        except ImportError:
-            logger.warning("WandB logger requested but not available")
-    
-    # Configure stopping criteria
-    stop = {
-        "training_iteration": train_cfg.num_iterations,
-    }
-    
-    # Start training with memory monitoring
-    logger.info(f"Starting training for {train_cfg.num_iterations} iterations")
-    logger.info(f"Results will be saved to: {exp_dir}")
-    
-    # Create memory tracker if available
-    if MemoryTracker:
-        memory_tracker = MemoryTracker(log_dir=exp_dir / "memory_logs")
-        memory_tracker.start()
-    else:
-        memory_tracker = None
-    
-    try:
-        # Run training
+        
+        # Обновление конфигурации модели с правильными размерностями
+        if poker_cfg.model_config.get("custom_model"):
+            model_config = poker_cfg.model_config.copy()
+            # Добавляем размерности в конфигурацию модели, если они отсутствуют
+            if "custom_model_config" not in model_config:
+                model_config["custom_model_config"] = {}
+            model_config["custom_model_config"]["obs_size"] = obs_size
+            model_config["custom_model_config"]["num_actions"] = num_actions
+        else:
+            model_config = {}
+        
+        # Создание конфигурации алгоритма PPO
+        config = (
+            PPOConfig()
+            # Environment
+            .environment(
+                env=PokerEnv,
+                env_config=env_config,
+            )
+            # Model
+            .training(
+                model={
+                    **model_config,
+                    **train_cfg.model,  # Добавление дополнительных параметров модели
+                },
+                lr=train_cfg.lr,
+                gamma=train_cfg.gamma,
+                lambda_=train_cfg.lambda_,
+                clip_param=train_cfg.clip_param,
+                vf_loss_coeff=train_cfg.vf_loss_coeff,
+                entropy_coeff=train_cfg.entropy_coeff,
+                train_batch_size=train_cfg.train_batch_size,
+                sgd_minibatch_size=train_cfg.sgd_minibatch_size,
+                num_sgd_iter=train_cfg.num_sgd_iter,
+                rollout_fragment_length=train_cfg.rollout_fragment_length,
+                batch_mode=train_cfg.batch_mode,
+            )
+            # Resources
+            .resources(
+                num_gpus=train_cfg.num_gpus,
+                num_cpus_per_worker=train_cfg.num_cpus_per_worker,
+                num_gpus_per_worker=train_cfg.num_gpus_per_worker,
+                num_workers=train_cfg.num_workers,
+                num_envs_per_worker=train_cfg.num_envs_per_worker,
+            )
+            # Evaluation (если настроено)
+            .evaluation(
+                evaluation_interval=train_cfg.evaluation_interval if train_cfg.evaluation_interval > 0 else None,
+                evaluation_duration=train_cfg.evaluation_duration,
+                evaluation_num_workers=train_cfg.evaluation_num_workers,
+                evaluation_parallel_to_training=train_cfg.evaluation_parallel_to_training,
+                evaluation_config=train_cfg.evaluation_config,
+            )
+            # Reporting & Checkpointing
+            .reporting(
+                min_time_s_per_iteration=10,  # Минимальное время на итерацию для стабильных отчетов
+                metrics_num_episodes_for_smoothing=100,  # Сглаживание метрик
+            )
+            .checkpointing(
+                checkpoint_frequency=train_cfg.checkpoint_freq,
+                checkpoint_at_end=train_cfg.checkpoint_at_end,
+                keep_checkpoints_num=train_cfg.keep_checkpoints_num,
+            )
+            # Debugging & Logging
+            .debugging(
+                log_level=train_cfg.log_level,
+                logger_config={
+                    "logdir": train_cfg.local_dir,
+                    "type": "ray.tune.logger.TBXLogger",
+                }
+            )
+            .framework("torch")
+            .build()
+        )
+        
+        # Логирование итоговой конфигурации
+        logger.info(f"Starting training with configuration: {json.dumps(config.to_dict(), indent=2)}")
+        
+        # Запуск обучения
         analysis = tune.run(
             "PPO",
-            name=train_cfg.tune_exp_name,
-            config=algo_config.to_dict(),
-            stop=stop,
-            local_dir=train_cfg.local_dir,
+            name=train_cfg.exp_name,
+            config=config.to_dict(),
+            stop={"training_iteration": train_cfg.num_iterations},
             checkpoint_freq=train_cfg.checkpoint_freq,
             checkpoint_at_end=train_cfg.checkpoint_at_end,
             keep_checkpoints_num=train_cfg.keep_checkpoints_num,
-            callbacks=callbacks,
             verbose=1,
-            # Add fault tolerance
-            max_failures=3,  # Allow restarts on failure
-            restore=True,    # Try to restore from previous runs
+            local_dir=train_cfg.local_dir,
+            callbacks=callbacks,
         )
         
-        logger.info("Training completed successfully")
-        
-        # Get best checkpoint
+        # Получение лучшего чекпоинта
         best_checkpoint = get_best_checkpoint(analysis)
-        
-        # Save the path to best checkpoint
         if best_checkpoint:
-            with open(exp_dir / "best_checkpoint.txt", "w") as f:
-                f.write(f"{best_checkpoint}\n")
+            logger.info(f"Best checkpoint path: {best_checkpoint}")
+            
+            # Сохранение пути к лучшему чекпоинту в отдельный файл для удобства
+            checkpoint_info_path = os.path.join(train_cfg.local_dir, "best_checkpoint_info.json")
+            with open(checkpoint_info_path, "w") as f:
+                json.dump({"best_checkpoint": best_checkpoint}, f)
+            
+            logger.info(f"Best checkpoint info saved to: {checkpoint_info_path}")
+        else:
+            logger.warning("No best checkpoint found.")
         
         return analysis
-    
+        
     except Exception as e:
-        logger.error(f"Training failed: {e}", exc_info=True)
-        return None
-    
+        logger.error(f"Error during training: {e}")
+        logger.error(traceback.format_exc())
+        # Гарантируем завершение Ray
+        ray.shutdown()
+        logger.info("Ray shutdown completed.")
+        raise
     finally:
-        # Stop memory tracking
-        if memory_tracker:
-            memory_tracker.stop()
-            logger.info(memory_tracker.get_memory_summary())
-        
-        # Clean up Ray
-        if ray.is_initialized():
-            logger.info("Shutting down Ray")
+        # Гарантируем завершение Ray в любом случае
+        try:
             ray.shutdown()
-        
-        # Force garbage collection
-        gc.collect()
+            logger.info("Ray shutdown completed.")
+        except Exception as e:
+            logger.error(f"Error shutting down Ray: {e}")
 
 def main():
-    parser = argparse.ArgumentParser(description="Train a PPO agent for Poker.")
-    parser.add_argument("--workers", type=int, help="Override number of workers")
-    parser.add_argument("--batch_size", type=int, help="Override train batch size")
-    parser.add_argument("--lr", type=float, help="Override learning rate")
-    parser.add_argument("--iterations", type=int, help="Override number of iterations")
-    parser.add_argument("--debug", action="store_true", help="Enable debug logging")
-    parser.add_argument("--memory-efficient", action="store_true", 
-                       help="Enable memory-efficient mode (reduces batch size and workers)")
+    """Основная точка входа скрипта."""
+    parser = argparse.ArgumentParser(description="Train a poker agent using RLlib.")
+    parser.add_argument("--config", type=str, default="config.py", help="Path to config file")
+    parser.add_argument("--debug", action="store_true", help="Enable debug mode")
+    parser.add_argument("--iterations", type=int, help="Override number of training iterations")
     args = parser.parse_args()
     
-    # Set log level
+    # Настройка уровня логирования
     if args.debug:
-        logger.setLevel(logging.DEBUG)
         logging.getLogger().setLevel(logging.DEBUG)
+        logger.setLevel(logging.DEBUG)
     
-    # Create configuration instances
-    poker_config = PokerConfig()
-    training_config = TrainingConfig()
-    
-    # Override config from arguments
-    if args.workers is not None:
-        training_config.num_workers = args.workers
-        
-    if args.batch_size is not None:
-        training_config.train_batch_size = args.batch_size
-        # Adjust SGD batch size too
-        training_config.sgd_minibatch_size = min(
-            training_config.sgd_minibatch_size, 
-            training_config.train_batch_size // 4
-        )
-        
-    if args.lr is not None:
-        training_config.lr = args.lr
-        
-    if args.iterations is not None:
-        training_config.num_iterations = args.iterations
-    
-    # Apply memory-efficient mode if requested
-    if args.memory_efficient:
-        logger.info("Memory-efficient mode enabled")
-        training_config.num_workers = max(1, min(4, training_config.num_workers))
-        training_config.train_batch_size = min(4096, training_config.train_batch_size)
-        training_config.sgd_minibatch_size = min(1024, training_config.sgd_minibatch_size)
-        training_config.rollout_fragment_length = min(100, training_config.rollout_fragment_length)
-    
-    # Log configuration
-    logger.info("=== Poker Configuration ===")
-    for key, value in vars(poker_config).items():
-        if not key.startswith("_"):
-            logger.info(f"{key}: {value}")
-    
-    logger.info("=== Training Configuration ===")
-    for key, value in vars(training_config).items():
-        if not key.startswith("_"):
-            logger.info(f"{key}: {value}")
-    
-    # Start training
     try:
-        start_time = time.time()
-        analysis = train_poker(poker_config, training_config)
-        duration = time.time() - start_time
+        # Загрузка конфигурации (уже импортирована выше)
+        poker_config = PokerConfig()
+        training_config = TrainingConfig()
         
-        if analysis:
-            logger.info(f"Training completed in {duration:.2f} seconds")
-        else:
-            logger.error("Training failed or was interrupted")
-    except KeyboardInterrupt:
-        logger.info("Training interrupted by user")
+        # Переопределение параметров из аргументов
+        if args.iterations:
+            training_config.num_iterations = args.iterations
+        
+        # Запуск обучения
+        logger.info("Starting training process")
+        train_poker(poker_config, training_config)
+        logger.info("Training completed successfully")
+        
     except Exception as e:
-        logger.error(f"Unhandled exception: {e}", exc_info=True)
-        # Clean up Ray if it's still running
-        if ray.is_initialized():
-            logger.info("Shutting down Ray due to error")
-            ray.shutdown()
+        logger.error(f"Training process failed.\n{e}")
+        traceback.print_exc()
+        sys.exit(1)
 
 if __name__ == "__main__":
     main()
