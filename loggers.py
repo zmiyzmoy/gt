@@ -3,7 +3,8 @@ import logging
 import wandb
 import os # Добавим os для expanduser
 from ray.tune.logger import LoggerCallback
-from ray.tune import Trial
+#from ray.tune import Trial
+from ray.tune.experiment.trial import Trial
 #from ray.tune.trial import Trial
 from typing import Dict, List, Optional
 
