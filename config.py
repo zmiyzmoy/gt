@@ -1,6 +1,6 @@
 # config.py
-from pathlib import Path
-from datetime import datetime
+from pathlib import Path # Для работы с путями файловой системы
+from datetime import datetime # Для генерации уникальных имен на основе времени
 import json
 import numpy as np
 from dataclasses import dataclass, field
