@@ -12,14 +12,106 @@ logger = logging.getLogger(__name__)
 # logger.setLevel(logging.DEBUG) # Раскомментируй для детальной отладки
 
 class OpponentStats:
-    # ... (код OpponentStats остается БЕЗ ИЗМЕНЕНИЙ) ...
-    def __init__(self, num_players): self.num_players = num_players; self.stats = {}; self.feature_size = 4; self.reset()
-    def reset(self): self.stats = {}; [self._ensure_player_stats(i) for i in range(self.num_players)]
-    def _ensure_player_stats(self, i): i=int(i); self.stats.setdefault(i,{'vpip':0,'pfr':0,'af':1,'hands':0,'agg':0,'pass':0,'vpip_opp':0,'pfr_opp':0,'vpip_act_count':0,'pfr_act_count':0,'vpip_acted_this_hand':False,'pfr_acted_this_hand':False})
-    def get_features(self, i): i=int(i); self._ensure_player_stats(i); s=self.stats[i]; h=s.get('hands',0); vo=s.get('vpip_opportunities',0); po=s.get('pfr_opportunities',0); va=s.get('vpip_actions',0); pa=s.get('pfr_actions',0); ag=s.get('agg_actions',0); ps=s.get('pass_actions',0); vpip=float(va/vo)if vo>0 else 0; pfr=float(pa/po)if po>0 else 0; af=float(ag/ps)if ps>0 else(5 if ag>0 else 1); naf=min(af/5,1); nh=min(h/100,1); return np.array([vpip,pfr,naf,nh],dtype=np.float32)
-    def record_opportunity(self, i, v, p): i=int(i); self._ensure_player_stats(i); if v: self.stats[i]['vpip_opportunities']=self.stats[i].get('vpip_opportunities',0)+1; self.stats[i]['vpip_acted_this_hand']=False; if p: self.stats[i]['pfr_opportunities']=self.stats[i].get('pfr_opportunities',0)+1; self.stats[i]['pfr_acted_this_hand']=False
-    def update_on_action(self, i, t, s, vol): i=int(i); self._ensure_player_stats(i); st=self.stats[i]; if s==0 and vol and not st['vpip_acted_this_hand']: st['vpip_actions']=st.get('vpip_actions',0)+1; st['vpip_acted_this_hand']=True; if s==0 and t=='raise' and not st['pfr_acted_this_hand']: st['pfr_actions']=st.get('pfr_actions',0)+1; st['pfr_acted_this_hand']=True; if s>0: (st['agg_actions']:=st.get('agg_actions',0)+1) if t=='raise' else (st['pass_actions']:=st.get('pass_actions',0)+1) if t=='call' else None
-    def finalize_hand_stats(self, inv): [ (self._ensure_player_stats(int(p)), self.stats[int(p)].update({'hands': self.stats[int(p)].get('hands',0)+1, 'vpip_acted_this_hand': False, 'pfr_acted_this_hand': False})) for p in inv]
+    """Класс для хранения и обновления базовой статистики оппонентов."""
+    def __init__(self, num_players):
+        self.num_players = num_players
+        self.stats = {}
+        # VPIP, PFR, Aggression Factor (AF), Hands Played
+        self.feature_size = 4
+        self.reset()
+
+    def reset(self):
+        """Сбрасывает статистику для всех игроков."""
+        self.stats = {}
+        for i in range(self.num_players):
+             self._ensure_player_stats(i)
+
+    def _ensure_player_stats(self, player_id):
+         """Гарантирует наличие записи для игрока."""
+         player_id_int = int(player_id)
+         if player_id_int not in self.stats:
+             self.stats[player_id_int] = {'vpip': 0.0, 'pfr': 0.0, 'af': 1.0, 'hands': 0,
+                                         'agg_actions': 0, 'pass_actions': 0,
+                                         'vpip_opportunities': 0, 'pfr_opportunities': 0,
+                                         'vpip_actions': 0, 'pfr_actions': 0, # Добавил счетчики действий
+                                         'vpip_acted_this_hand': False, 'pfr_acted_this_hand': False}
+
+
+    def get_features(self, player_id):
+        """Возвращает нормализованную статистику для игрока как numpy array float32."""
+        player_id_int = int(player_id)
+        self._ensure_player_stats(player_id_int) # Гарантируем наличие ключа
+        player_stats = self.stats[player_id_int]
+
+        # Расчет VPIP/PFR/AF на лету
+        hands = player_stats.get('hands', 0)
+        vpip_opps = player_stats.get('vpip_opportunities', 0)
+        pfr_opps = player_stats.get('pfr_opportunities', 0)
+        vpip_actions = player_stats.get('vpip_actions', 0)
+        pfr_actions = player_stats.get('pfr_actions', 0)
+        agg_actions = player_stats.get('agg_actions', 0)
+        pass_actions = player_stats.get('pass_actions', 0)
+
+        vpip = float(vpip_actions / vpip_opps) if vpip_opps > 0 else 0.0
+        pfr = float(pfr_actions / pfr_opps) if pfr_opps > 0 else 0.0
+
+        if pass_actions > 0:
+            af = float(agg_actions / pass_actions)
+        elif agg_actions > 0:
+            af = 5.0 # Условное высокое значение
+        else:
+            af = 1.0 # Нейтральное
+
+        # Нормализация (примерная)
+        norm_af = min(af / 5.0, 1.0)
+        norm_hands = min(hands / 100.0, 1.0)
+
+        return np.array([vpip, pfr, norm_af, norm_hands], dtype=np.float32)
+
+    # --- ИСПРАВЛЕННЫЙ МЕТОД С ПРАВИЛЬНЫМ СИНТАКСИСОМ ---
+    def record_opportunity(self, player_id, is_vpip_opp, is_pfr_opp):
+        """Записывает возможность для VPIP/PFR."""
+        player_id_int = int(player_id)
+        self._ensure_player_stats(player_id_int)
+        if is_vpip_opp:
+             self.stats[player_id_int]['vpip_opportunities'] = self.stats[player_id_int].get('vpip_opportunities', 0) + 1
+             self.stats[player_id_int]['vpip_acted_this_hand'] = False # Сбрасываем флаг
+        # Правильный синтаксис для второго if
+        if is_pfr_opp:
+             self.stats[player_id_int]['pfr_opportunities'] = self.stats[player_id_int].get('pfr_opportunities', 0) + 1
+             self.stats[player_id_int]['pfr_acted_this_hand'] = False
+    # ----------------------------------------------------
+
+    def update_on_action(self, player_id, action_type, street, is_voluntary_action):
+        """Обновляет счетчики действий."""
+        player_id_int = int(player_id)
+        self._ensure_player_stats(player_id_int)
+        stats = self.stats[player_id_int]
+
+        if street == 0 and is_voluntary_action and not stats['vpip_acted_this_hand']:
+             stats['vpip_actions'] = stats.get('vpip_actions', 0) + 1
+             stats['vpip_acted_this_hand'] = True
+
+        if street == 0 and action_type == 'raise' and not stats['pfr_acted_this_hand']:
+             stats['pfr_actions'] = stats.get('pfr_actions', 0) + 1
+             stats['pfr_acted_this_hand'] = True
+
+        if street > 0:
+            if action_type == 'raise':
+                stats['agg_actions'] = stats.get('agg_actions', 0) + 1
+            elif action_type == 'call':
+                stats['pass_actions'] = stats.get('pass_actions', 0) + 1
+
+    def finalize_hand_stats(self, involved_players):
+         """Вызывается в конце руки для увеличения счетчика рук."""
+         for player_id in involved_players:
+             player_id_int = int(player_id)
+             self._ensure_player_stats(player_id_int)
+             self.stats[player_id_int]['hands'] += 1
+             # Сбрасываем флаги действий в текущей руке
+             self.stats[player_id_int]['vpip_acted_this_hand'] = False
+             self.stats[player_id_int]['pfr_acted_this_hand'] = False
+
 
 class PokerEnv(gym.Env):
     metadata = {'render_modes': ['human', 'ansi'], 'render_fps': 4}
@@ -30,30 +122,28 @@ class PokerEnv(gym.Env):
 
         if "config" not in env_config:
              raise ValueError("Missing 'config' key in env_config dictionary.")
-        self.config = env_config["config"]
+        self.config = env_config["config"] # Экземпляр PokerConfig
         self.dtype = env_config.get("dtype", np.float32)
 
         # --- OpenSpiel Initialization ---
         game_params_from_config = self.config.game_config
         processed_game_params = {}
         for k, v in game_params_from_config.items():
-            if k in ["numBoardCards", "blind", "stack"]: # Параметры-списки или stack -> строки
+            if k in ["numBoardCards", "blind", "stack"]:
                 processed_game_params[k] = " ".join(map(str, v)) if isinstance(v, (list, tuple, np.ndarray)) else str(v)
             elif isinstance(v, (int, float, np.number)):
-                 processed_game_params[k] = v # Числа оставляем числами
+                 processed_game_params[k] = v
             elif isinstance(v, bool):
-                 processed_game_params[k] = str(v).lower() # Булевы -> "true"/"false"
+                 processed_game_params[k] = str(v).lower()
             else:
-                 processed_game_params[k] = str(v) # Остальное -> строки
+                 processed_game_params[k] = str(v)
 
         logger.info(f"Creating OpenSpiel game: {self.config.game_name} with FINAL params: {processed_game_params}")
         try:
             self.game = pyspiel.load_game(self.config.game_name, processed_game_params)
             logger.info("Game loaded successfully")
         except Exception as e:
-            # --- ИСПРАВЛЕНАЯ f-СТРОКА ---
             logger.error(f"Failed to load game '{self.config.game_name}' with params: {str(processed_game_params)} - Error: {e}", exc_info=True)
-            # -------------------------
             raise
 
         try:
@@ -74,70 +164,104 @@ class PokerEnv(gym.Env):
 
         logger.info(f"PokerEnv initialized for {self.config.num_players} players.")
 
-    def _reset_metrics(self): self.episode_rewards = {p: 0.0 for p in range(self.config.num_players)}; self.current_hand_info = {'actions_by_player': {p: [] for p in range(self.config.num_players)}, 'involved_players': set(), 'pot_size': 0, 'current_player': -1, 'last_raiser': -1, 'can_check': {}}
-    def _define_spaces(self):
-        num_actions = self._action_spec["num_actions"]; self.action_space = gym.spaces.Discrete(num_actions); logger.info(f"Action space: Discrete({self.action_space.n})")
-        try:
-            ts = self._base_env.reset(); pid = ts.observations["current_player"]; pid = 0 if pid<0 and len(ts.observations["info_state"])>0 else pid
-            if pid >= 0: obs_v = self._get_one_observation(ts, pid); obs_size = len(obs_v); logger.info(f"Observation size: {obs_size}"); self.observation_space = gym.spaces.Box(low=-np.inf, high=np.inf, shape=(obs_size,), dtype=self.dtype)
-            else: raise ValueError("No initial player")
-        except Exception as e: logger.error(f"Define spaces error: {e}. Fallback 512.", exc_info=True); self.observation_space = gym.spaces.Box(low=-np.inf, high=np.inf, shape=(512,), dtype=self.dtype)
+    def _reset_metrics(self):
+        self.episode_rewards = {p: 0.0 for p in range(self.config.num_players)}
+        self.current_hand_info = {
+            'actions_by_player': {p: [] for p in range(self.config.num_players)},
+            'involved_players': set(), 'pot_size': 0, 'current_player': -1,
+            'last_raiser': -1, 'can_check': {}
+        }
 
-    def _get_one_observation(self, ts, pid):
-         shape = self.observation_space.shape if hasattr(self,'observation_space') else (512,);
-         if pid < 0 or pid >= len(ts.observations.get("info_state",[])): return np.zeros(shape, dtype=self.dtype)
+    def _define_spaces(self):
+        num_actions = self._action_spec["num_actions"]
+        self.action_space = gym.spaces.Discrete(num_actions)
+        logger.info(f"Action space defined: Discrete({self.action_space.n})")
+        try:
+            time_step = self._base_env.reset()
+            player_id = time_step.observations["current_player"]
+            if player_id < 0 and len(time_step.observations["info_state"]) > 0: player_id = 0
+            if player_id >= 0:
+                 processed_obs_vector = self._get_one_observation(time_step, player_id)
+                 obs_size = len(processed_obs_vector)
+                 logger.info(f"Calculated Observation space size: {obs_size}")
+                 self.observation_space = gym.spaces.Box(low=-np.inf, high=np.inf, shape=(obs_size,), dtype=self.dtype)
+            else: raise ValueError("Could not determine initial player.")
+        except Exception as e:
+             logger.error(f"Failed to determine observation size: {e}. Using fallback 512.", exc_info=True)
+             self.observation_space = gym.spaces.Box(low=-np.inf, high=np.inf, shape=(512,), dtype=self.dtype)
+
+    def _get_one_observation(self, time_step, player_id):
+         if not hasattr(self, 'observation_space'):
+              logger.error("Observation space not defined yet in _get_one_observation!")
+              return np.zeros(512, dtype=self.dtype)
+         obs_shape = self.observation_space.shape
+         if player_id < 0 or player_id >= len(time_step.observations.get("info_state", [])):
+             logger.warning(f"Invalid player_id {player_id}. Returning zeros.")
+             return np.zeros(obs_shape, dtype=self.dtype)
          try:
-            base_obs = np.array(ts.observations["info_state"][pid], dtype=self.dtype)
-            pos_f = np.array([float(pid)/max(1,self.config.num_players-1)], dtype=self.dtype)
-            opp_f_list = [f for i in range(self.config.num_players) if i!=pid for f in self.stats.get_features(i)]; opp_f = np.array(opp_f_list, dtype=self.dtype)
-            po_f = np.array([self._calculate_pot_odds(ts, pid)], dtype=self.dtype); spr_f = np.array([self._calculate_stack_to_pot(ts, pid)], dtype=self.dtype)
-            # --- ПРОВЕРКА РАЗМЕРНОСТИ ---
-            expected_len = shape[0]
-            current_len = len(base_obs) + len(pos_f) + len(po_f) + len(spr_f) + len(opp_f)
-            if current_len != expected_len:
-                 logger.warning(f"Observation parts length mismatch! Sum={current_len}, Expected={expected_len}. Adjusting base_obs.")
-                 diff = expected_len - (len(pos_f) + len(po_f) + len(spr_f) + len(opp_f))
-                 if diff > 0:
-                      if len(base_obs) > diff: base_obs = base_obs[:diff]
-                      elif len(base_obs) < diff: base_obs = np.pad(base_obs, (0, diff - len(base_obs)), 'constant').astype(self.dtype)
-                 else: # Если дополнительных фич больше, чем ожидалось - это ошибка
-                      logger.error(f"Too many additional features! Cannot construct observation of size {expected_len}.")
-                      return np.zeros(shape, dtype=self.dtype)
-            # ----------------------------
-            full_obs = np.concatenate([base_obs, pos_f, po_f, spr_f, opp_f]).astype(self.dtype)
-            return full_obs if len(full_obs)==shape[0] else np.zeros(shape, dtype=self.dtype) # Финальная проверка
-         except Exception as e: logger.error(f"Get obs error p{pid}: {e}", exc_info=True); return np.zeros(shape, dtype=self.dtype)
+            base_obs_list = time_step.observations["info_state"][player_id]
+            base_obs = np.array(base_obs_list, dtype=self.dtype)
+            position_feature = np.array([float(player_id) / max(1, self.config.num_players - 1)], dtype=self.dtype)
+            opponent_features_list = []
+            for pid in range(self.config.num_players):
+                if pid != player_id: opponent_features_list.extend(self.stats.get_features(pid))
+            opponent_features = np.array(opponent_features_list, dtype=self.dtype)
+            pot_odds_feature = np.array([self._calculate_pot_odds(time_step, player_id)], dtype=self.dtype)
+            stack_to_pot_feature = np.array([self._calculate_stack_to_pot(time_step, player_id)], dtype=self.dtype)
+
+            # --- Проверка размерности базового obs ---
+            expected_base_len = obs_shape[0] - 1 - 1 - 1 - len(opponent_features) # Pos, PO, SPR, OppStats
+            if len(base_obs) != expected_base_len:
+                 logger.warning(f"Base obs length mismatch! Got {len(base_obs)}, expected {expected_base_len}. Adjusting.")
+                 if len(base_obs) > expected_base_len:
+                     base_obs = base_obs[:expected_base_len]
+                 else:
+                     base_obs = np.pad(base_obs, (0, expected_base_len - len(base_obs)), 'constant').astype(self.dtype)
+            # --- Конец проверки ---
+
+            full_obs = np.concatenate([
+                base_obs, position_feature, pot_odds_feature,
+                stack_to_pot_feature, opponent_features
+            ]).astype(self.dtype)
+
+            if len(full_obs) != obs_shape[0]:
+                 logger.error(f"FINAL obs length mismatch! Got {len(full_obs)}, expected {obs_shape[0]}. Returning zeros.")
+                 return np.zeros(obs_shape, dtype=self.dtype)
+            return full_obs
+         except Exception as e:
+            logger.error(f"Error in _get_one_observation for player {player_id}: {e}", exc_info=True)
+            return np.zeros(obs_shape, dtype=self.dtype)
 
     def reset(self, seed=None, options=None):
         super().reset(seed=seed); logger.info("Resetting environment...");
         try:
             self._current_time_step = self._base_env.reset(); self.current_street = 0; self._reset_metrics()
-            for p in range(self.config.num_players): self.stats.record_opportunity(p, p!=1, True)
-            pid = self._current_time_step.observations["current_player"]; pid = 0 if pid<0 else pid
-            obs = self._get_one_observation(self._current_time_step, pid)
-            return obs, {} # Возвращаем obs и пустой info
+            for p in range(self.config.num_players): self.stats.record_opportunity(p, p!=1, True) # Упрощенно
+            player_id = self._current_time_step.observations["current_player"]; player_id = 0 if player_id<0 else player_id
+            obs = self._get_one_observation(self._current_time_step, player_id)
+            return obs.astype(self.dtype), {} # Гарантируем тип float32
         except Exception as e: logger.error(f"Reset error: {e}", exc_info=True); return np.zeros(self.observation_space.shape, dtype=self.dtype), {}
 
     def step(self, action):
         if isinstance(action, np.generic): action = int(action)
-        p_before = self._current_time_step.observations["current_player"] if self._current_time_step else -1; logger.debug(f"P{p_before} action: {action}")
-        if self._current_time_step is None or self._current_time_step.last(): obs, info = self.reset(); return obs, 0.0, True, False, info
-        curr_p = self._current_time_step.observations["current_player"]; legal = self._current_time_step.observations["legal_actions"][curr_p]
+        player_before_action = self._current_time_step.observations["current_player"] if self._current_time_step else -1; logger.debug(f"P{player_before_action} action: {action}")
+        if self._current_time_step is None or self._current_time_step.last(): obs, info = self.reset(); return obs.astype(self.dtype), 0.0, True, False, info
+        current_player = self._current_time_step.observations["current_player"]; legal = self._current_time_step.observations["legal_actions"][current_player]
         if action not in legal: action = self.np_random.choice(legal) if legal else 0; logger.warning(f"Illegal action corrected to {action}")
         try:
-            act_type = self._get_action_type(action); is_vol = (self.current_street==0 and act_type!='fold') or (self.current_street>0 and act_type!='fold')
-            self.stats.update_on_action(curr_p, act_type, self.current_street, is_vol); self.current_hand_info['actions_by_player'][curr_p].append(action); self.current_hand_info['involved_players'].add(curr_p)
+            action_type = self._get_action_type(action); is_vol = (self.current_street==0 and act_type!='fold') or (self.current_street>0 and act_type!='fold')
+            self.stats.update_on_action(current_player, action_type, self.current_street, is_vol); self.current_hand_info['actions_by_player'][current_player].append(action); self.current_hand_info['involved_players'].add(current_player)
             self._current_time_step = self._base_env.step([action])
             self.current_hand_info['pot_size'] = self._get_pot_size(self._current_time_step); next_p = self._current_time_step.observations["current_player"]; self.current_hand_info['current_player'] = next_p
             new_s = self._get_street(self._current_time_step);
             if new_s != self.current_street: self.current_street = new_s
-            reward = float(self._current_time_step.rewards[curr_p]); terminated = self._current_time_step.last(); truncated = False
+            reward = float(self._current_time_step.rewards[current_player]); terminated = self._current_time_step.last(); truncated = False
             obs_vector = self._get_one_observation(self._current_time_step, next_p)
             if terminated:
                 self.stats.finalize_hand_stats(self.current_hand_info['involved_players'])
                 for p, r in enumerate(self._current_time_step.rewards): self.episode_rewards[p] = self.episode_rewards.get(p, 0.0) + float(r)
             info = self._enhance_info({}, next_p)
-            return obs_vector, reward, terminated, truncated, info
+            return obs_vector.astype(self.dtype), reward, terminated, truncated, info # Гарантируем тип float32
         except Exception as e: logger.error(f"Step error: {e}", exc_info=True); return np.zeros(self.observation_space.shape, dtype=self.dtype), 0.0, True, False, {"error": str(e)}
 
     def _get_state(self): return getattr(self._base_env, '_state', None)
