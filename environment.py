@@ -9,14 +9,14 @@ from typing import Dict, Any, List, Tuple
 
 # Настройка логирования
 logger = logging.getLogger(__name__)
-# logger.setLevel(logging.DEBUG) # Раскомментируй для отладки
+# logger.setLevel(logging.DEBUG) # Раскомментируй для детальной отладки
 
 class OpponentStats:
-    # ... (код OpponentStats остается БЕЗ ИЗМЕНЕНИЙ) ...
+    """Класс для хранения и обновления базовой статистики оппонентов."""
     def __init__(self, num_players):
         self.num_players = num_players
         self.stats = {}
-        self.feature_size = 4
+        self.feature_size = 4 # VPIP, PFR, AF, Hands
         self.reset()
 
     def reset(self):
@@ -84,7 +84,6 @@ class OpponentStats:
              self.stats[player_id_int]['vpip_acted_this_hand'] = False
              self.stats[player_id_int]['pfr_acted_this_hand'] = False
 
-
 class PokerEnv(gym.Env):
     metadata = {'render_modes': ['human', 'ansi'], 'render_fps': 4}
 
@@ -94,29 +93,22 @@ class PokerEnv(gym.Env):
 
         if "config" not in env_config:
              raise ValueError("Missing 'config' key in env_config dictionary.")
-        self.config = env_config["config"]
+        self.config = env_config["config"] # Экземпляр PokerConfig
         self.dtype = env_config.get("dtype", np.float32)
 
         # --- OpenSpiel Initialization ---
-        # --- ИЗМЕНЕНО: Правильная конвертация для OpenSpiel 1.3 ---
+        # --- ИЗМЕНЕНО: Конвертируем ВСЕ значения в СТРОКИ для OpenSpiel 1.3 ---
         game_params_from_config = self.config.game_config
         processed_game_params = {}
         for k, v in game_params_from_config.items():
-            if isinstance(v, (list, tuple, np.ndarray)):
-                # Списки -> строки с пробелами
-                processed_game_params[k] = " ".join(map(str, v))
-            elif isinstance(v, (bool)):
-                 # Bool -> строки "true"/"false"
-                 processed_game_params[k] = str(v).lower()
-            else:
-                # Числа и строки остаются как есть (int, float, str)
-                # pyspiel.load_game разберется с ними
-                processed_game_params[k] = v
-        # ------------------------------------------------------
+             if isinstance(v, (list, tuple, np.ndarray)):
+                 processed_game_params[k] = " ".join(map(str, v)) # Списки -> строки
+             else:
+                 processed_game_params[k] = str(v) # Все остальное -> строки
+        # --------------------------------------------------------------------
 
         logger.info(f"Creating OpenSpiel game: {self.config.game_name} with params: {processed_game_params}")
         try:
-            # Передаем обработанный словарь
             self.game = pyspiel.load_game(self.config.game_name, processed_game_params)
             logger.info("Game loaded successfully")
         except Exception as e:
@@ -141,10 +133,6 @@ class PokerEnv(gym.Env):
 
         logger.info(f"PokerEnv initialized for {self.config.num_players} players.")
 
-    # --- Остальные методы (_define_spaces, reset, step, _process_observation и т.д.) ---
-    # --- остаются БЕЗ ИЗМЕНЕНИЙ по сравнению с твоей последней версией ---
-    # --- (кроме того, что dtype=np.float32 уже используется) ---
-
     def _reset_metrics(self):
         self.episode_rewards = {p: 0.0 for p in range(self.config.num_players)}
         self.current_hand_info = {
@@ -160,6 +148,7 @@ class PokerEnv(gym.Env):
         num_actions = self._action_spec["num_actions"]
         self.action_space = gym.spaces.Discrete(num_actions)
         logger.info(f"Action space defined: Discrete({self.action_space.n})")
+
         try:
             time_step = self._base_env.reset()
             player_id = time_step.observations["current_player"]
@@ -178,23 +167,27 @@ class PokerEnv(gym.Env):
 
     def _get_one_observation(self, time_step, player_id):
          if player_id < 0 or player_id >= len(time_step.observations["info_state"]):
-             logger.warning(f"Invalid player_id {player_id} requested. Returning zeros.")
              shape_to_use = self.observation_space.shape if hasattr(self, 'observation_space') else (512,)
              return np.zeros(shape_to_use, dtype=self.dtype)
          try:
             base_obs_list = time_step.observations["info_state"][player_id]
-            base_obs = np.array(base_obs_list, dtype=self.dtype)
+            base_obs = np.array(base_obs_list, dtype=self.dtype) # Используем self.dtype (float32)
+
             position_feature = np.array([float(player_id) / max(1, self.config.num_players - 1)], dtype=self.dtype)
+
             opponent_features_list = []
             for pid in range(self.config.num_players):
                 if pid != player_id: opponent_features_list.extend(self.stats.get_features(pid))
             opponent_features = np.array(opponent_features_list, dtype=self.dtype)
+
             pot_odds_feature = np.array([self._calculate_pot_odds(time_step, player_id)], dtype=self.dtype)
             stack_to_pot_feature = np.array([self._calculate_stack_to_pot(time_step, player_id)], dtype=self.dtype)
+
             full_obs = np.concatenate([
                 base_obs, position_feature, pot_odds_feature,
                 stack_to_pot_feature, opponent_features
-            ]).astype(self.dtype)
+            ]).astype(self.dtype) # Гарантируем тип
+
             expected_len = self.observation_space.shape[0]
             if len(full_obs) != expected_len:
                  logger.warning(f"Obs length mismatch! Got {len(full_obs)}, expected {expected_len}. Padding/truncating.")
@@ -215,8 +208,7 @@ class PokerEnv(gym.Env):
             self.current_street = 0
             self._reset_metrics()
             for p in range(self.config.num_players):
-                 is_vpip_opp = (p != 1)
-                 is_pfr_opp = True
+                 is_vpip_opp = (p != 1); is_pfr_opp = True
                  self.stats.record_opportunity(p, is_vpip_opp, is_pfr_opp)
             player_id = self._current_time_step.observations["current_player"]
             if player_id < 0: player_id = 0
@@ -230,16 +222,20 @@ class PokerEnv(gym.Env):
         if isinstance(action, np.generic): action = int(action)
         player_before_action = self._current_time_step.observations["current_player"] if self._current_time_step else -1
         logger.debug(f"Player {player_before_action} received action: {action}")
+
         if self._current_time_step is None or self._current_time_step.last():
              logger.warning("Step on terminated/uninitialized env. Resetting.")
              obs, info = self.reset()
              return obs, 0.0, True, False, info
+
         current_player = self._current_time_step.observations["current_player"]
         legal_actions = self._current_time_step.observations["legal_actions"][current_player]
+
         if action not in legal_actions:
             logger.warning(f"Illegal action {action} by p{current_player}. Legal: {legal_actions}.")
             action = self.np_random.choice(legal_actions) if legal_actions else 0
             logger.warning(f"Replaced with random legal action: {action}")
+
         try:
             action_type = self._get_action_type(action)
             is_voluntary = (self.current_street == 0 and action_type != 'fold') or \
@@ -247,24 +243,30 @@ class PokerEnv(gym.Env):
             self.stats.update_on_action(current_player, action_type, self.current_street, is_voluntary)
             self.current_hand_info['actions_by_player'][current_player].append(action)
             self.current_hand_info['involved_players'].add(current_player)
+
             self._current_time_step = self._base_env.step([action])
+
             self.current_hand_info['pot_size'] = self._get_pot_size(self._current_time_step)
             next_player = self._current_time_step.observations["current_player"]
             self.current_hand_info['current_player'] = next_player
+
             new_street = self._get_street(self._current_time_step)
             if new_street != self.current_street:
-                logger.debug(f"Street changed: {self.current_street} -> {new_street}")
                 self.current_street = new_street
+
             reward = float(self._current_time_step.rewards[current_player])
             terminated = self._current_time_step.last()
             truncated = False
             obs_vector = self._get_one_observation(self._current_time_step, next_player)
+
             if terminated:
                 self.stats.finalize_hand_stats(self.current_hand_info['involved_players'])
                 for p, r in enumerate(self._current_time_step.rewards):
                      self.episode_rewards[p] = self.episode_rewards.get(p, 0.0) + float(r)
+
             info = self._enhance_info({}, next_player)
             return obs_vector, reward, terminated, truncated, info
+
         except Exception as e:
             logger.error(f"Error during step: {e}", exc_info=True)
             return np.zeros(self.observation_space.shape, dtype=self.dtype), 0.0, True, False, {"error": str(e)}
@@ -273,7 +275,7 @@ class PokerEnv(gym.Env):
     def _get_pot_size(self, time_step):
         state = self._get_state(); return float(state.pot()) if state and hasattr(state, 'pot') else 0.0
     def _get_action_type(self, action):
-        state = self._get_state(); current_player = self._current_time_step.observations["current_player"]
+        state = self._get_state(); current_player = self._current_time_step.observations["current_player"] if self._current_time_step else -1
         if state and hasattr(state, 'action_to_string') and current_player >= 0:
              try:
                  action_str = state.action_to_string(current_player, action)
