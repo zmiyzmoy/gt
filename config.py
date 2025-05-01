@@ -1,10 +1,10 @@
 # config.py
-from pathlib import Path
-from datetime import datetime
-import json
-import numpy as np
-from dataclasses import dataclass, field
-from typing import Dict, Any, List
+from pathlib import Path # Для работы с путями файловой системы
+from datetime import datetime # Для генерации уникальных имен на основе времени
+import json # Для форматирования game_config в JSON
+import numpy as np # Для работы с массивами данных (если нужно)
+from dataclasses import dataclass, field # Для создания конфигурационных классов
+from typing import Dict, Any, List     # Для аннотаций типов
 
 @dataclass
 class PokerConfig:

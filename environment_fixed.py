@@ -10,7 +10,9 @@ import gymnasium as gym
 import numpy as np
 from gymnasium import spaces
 from open_spiel.python import rl_environment
-from open_spiel.python.algorithms import get_legal_actions_map
+
+# Удаляем импорт get_legal_actions_map, так как он не нужен
+# эта функция используется только в OpenSpiel для других целей
 
 # Настройка логгера
 logger = logging.getLogger(__name__)

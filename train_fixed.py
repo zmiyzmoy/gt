@@ -22,6 +22,11 @@ try:
     from config import PokerConfig, TrainingConfig
     from environment_fixed import PokerEnv, create_poker_env
     from loggers import WandbLoggerCallback
+    # Регистрация моделей
+    from register_models import register_models
+    
+    # Регистрируем модели перед использованием
+    register_models()
 except ImportError as e:
     print(f"Error importing modules: {e}")
     print("Make sure all required files are in the correct locations.")
