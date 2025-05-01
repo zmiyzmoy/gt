@@ -10,11 +10,14 @@ from ray.tune.registry import register_env
 # from ray.tune.logger import WandbLoggerCallback # Импорт для W&B в Ray 2.10
 import numpy as np
 from pathlib import Path
+# --- ДОБАВЛЕН ИМПОРТ ---
+from ray.rllib.algorithms.algorithm import Algorithm
+# -----------------------
 
 # Импортируем наши модули
 from config import PokerConfig, TrainingConfig
 from environment import PokerEnv
-from models import AdvancedPokerModel
+from models import AdvancedPokerModel # Убедись, что models.py есть
 
 # Настраиваем логирование
 logging.basicConfig(
@@ -33,15 +36,7 @@ logger = logging.getLogger(__name__)
 
 def setup_wandb(config: TrainingConfig):
     """Настройка Weights & Biases (опционально)"""
-    # if config.wandb_project and os.environ.get("WANDB_MODE") != "disabled":
-    #     try:
-    #         wandb.init(...) # Настройка W&B init
-    #         logger.info("W&B initialized...")
-    #         return True
-    #     except Exception as e:
-    #         logger.warning(f"Failed to initialize W&B: {e}. Disabling.")
-    #         os.environ["WANDB_MODE"] = "disabled"
-    return False # Возвращаем False, если W&B не используется
+    return False # Пока отключаем для простоты
 
 
 def create_env(env_config):
@@ -57,26 +52,29 @@ def train_poker():
         # Инициализируем конфигурации
         poker_config = PokerConfig()
         training_config = TrainingConfig()
-        training_config.model = poker_config.model_config # Связываем модель
+        training_config.model = poker_config.model_config
 
         # Настраиваем W&B (если нужно)
         use_wandb = setup_wandb(training_config)
 
         # --- Инициализируем Ray ---
         available_cpus = os.cpu_count() or 12
-        # Корректируем num_workers на основе доступных CPU
-        num_workers = min(training_config.num_workers, available_cpus - 2) # -2: для драйвера и резерва
-        if num_workers != training_config.num_workers:
-             logger.warning(f"Reduced num_workers from {training_config.num_workers} to {num_workers} based on available CPUs ({available_cpus})")
+        # Корректируем num_workers (ставим num_workers = 5 для теста)
+        num_workers = 5 # min(training_config.num_workers, available_cpus - 2)
+        logger.info(f"Setting num_workers to {num_workers}")
+        # if num_workers != training_config.num_workers:
+        #      logger.warning(f"Reduced num_workers from {training_config.num_workers} to {num_workers}")
 
+        # --- ЯВНО УКАЗЫВАЕМ ВСЕ CPU ---
         ray.init(
-            num_cpus=num_workers + 1, # Указываем точное кол-во CPU для Ray
+            num_cpus=available_cpus, # Пытаемся использовать все CPU, что видит ОС
             num_gpus=training_config.num_gpus,
             logging_level=logging.INFO,
             ignore_reinit_error=True
         )
-        logger.info("Ray initialized. View dashboard at http://127.0.0.1:8265 (default address)")
-
+        # --- ПЕЧАТАЕМ ДОСТУПНЫЕ РЕСУРСЫ ---
+        logger.info(f"Ray sees AVAILABLE resources: {ray.available_resources()}")
+        # ---------------------------------
 
         # Регистрируем окружение
         register_env("PokerEnv", create_env)
@@ -108,52 +106,59 @@ def train_poker():
             .resources(
                 num_gpus=training_config.num_gpus,
                 num_cpus_per_worker=training_config.num_cpus_per_worker,
-                num_gpus_per_worker=training_config.num_gpus_per_worker
+                num_gpus_per_worker=training_config.num_gpus_per_worker,
+                # --- ЯВНО ЗАДАЕМ CPU ДЛЯ ДРАЙВЕРА ---
+                num_cpus_for_driver=1
+                # -----------------------------------
             )
-            .evaluation(
-                evaluation_interval=training_config.evaluation_interval,
-                evaluation_duration=training_config.evaluation_duration,
-                evaluation_num_workers=training_config.evaluation_num_workers,
-                evaluation_parallel_to_training=training_config.evaluation_parallel_to_training,
-                evaluation_config={"explore": False}
-            )
+            # --- ВРЕМЕННО ОТКЛЮЧАЕМ EVALUATION ---
+            # .evaluation(
+            #     evaluation_interval=training_config.evaluation_interval,
+            #     evaluation_duration=training_config.evaluation_duration,
+            #     evaluation_num_workers=training_config.evaluation_num_workers,
+            #     evaluation_parallel_to_training=False, # Отключаем параллельность
+            #     evaluation_config={"explore": False}
+            # )
             .debugging(log_level=training_config.log_level)
-            # .callbacks(PokerCallbacks) # Раскомментируй, если нужны твои колбэки
+            # .callbacks(PokerCallbacks)
         )
-        final_ppo_config = ppo_config_builder.to_dict()
+        final_ppo_config_dict = ppo_config_builder.to_dict()
+
+        # --- ПЕЧАТАЕМ РАССЧИТАННЫЙ ЗАПРОС РЕСУРСОВ ---
+        try:
+             # Для Ray 2.10 используем PPO класс напрямую
+             from ray.rllib.algorithms.ppo import PPO
+             calculated_resources = PPO.default_resource_request(final_ppo_config_dict)
+             logger.info(f"RLlib CALCULATED resource request per trial: {calculated_resources}")
+        except Exception as e:
+             logger.warning(f"Could not calculate default_resource_request: {e}")
+        # ------------------------------------------
         logger.info("PPOConfig configured.")
 
 
         # --- Запускаем обучение с Ray Tune (classic API) ---
         logger.info(f"Starting Ray Tune experiment '{training_config.tune_exp_name}'...")
         local_dir_path = Path(training_config.local_dir)
-        # Tune ожидает родительскую папку в local_dir для классического API
         storage_parent_path = str(local_dir_path.parent.resolve())
-        exp_dir_name = local_dir_path.name # Имя папки будет создано внутри storage_parent_path
+        exp_dir_name = local_dir_path.name
 
         logger.info(f"Results will be stored under: {storage_parent_path}")
-        # Tune сам создаст папку эксперимента, не нужно делать mkdir
+        local_dir_path.mkdir(parents=True, exist_ok=True)
 
         tune_callbacks = []
-        # if use_wandb:
-        #      try:
-        #           from ray.tune.logger import WandbLogger
-        #           tune_callbacks.append(WandbLogger(project=training_config.wandb_project))
-        #           logger.info("Using WandbLogger for Ray Tune.")
-        #      except ImportError:
-        #           logger.warning("Could not import WandbLogger. W&B Tune callback disabled.")
+        # ... (W&B callback, если нужен) ...
 
         analysis = tune.run(
             "PPO",
-            name=exp_dir_name, # Имя папки эксперимента
-            config=final_ppo_config,
+            name=exp_dir_name,
+            config=final_ppo_config_dict, # Передаем словарь
             stop={"training_iteration": training_config.num_iterations},
-            local_dir=storage_parent_path, # Родительская папка для результатов
+            local_dir=storage_parent_path,
             checkpoint_freq=training_config.checkpoint_freq,
             checkpoint_at_end=training_config.checkpoint_at_end,
             keep_checkpoints_num=training_config.keep_checkpoints_num,
             verbose=1,
-            # fail_fast=True, # Можно раскомментировать
+            # fail_fast=True, # Раскомментируй, если нужно
             # max_failures=0,
             # callbacks=tune_callbacks,
             # resume="AUTO"
@@ -166,22 +171,16 @@ def train_poker():
         best_trial = analysis.get_best_trial(metric="episode_reward_mean", mode="max", scope="last")
         if best_trial:
             best_checkpoint_dict = analysis.get_best_checkpoint(trial=best_trial, metric="episode_reward_mean", mode="max")
-            # --- ИСПРАВЛЕНИЕ AttributeError ---
             if best_checkpoint_dict:
-                best_checkpoint_path = best_checkpoint_dict if isinstance(best_checkpoint_dict, str) else best_checkpoint_dict.get("filesystem", {}).get("path")
+                best_checkpoint_path = best_checkpoint_dict if isinstance(best_checkpoint_dict, str) else best_checkpoint_dict.get("path") # В 2.10 может быть просто путь
                 logger.info(f"Best checkpoint found at: {best_checkpoint_path}")
-                # TODO: Логирование лучшей модели в W&B
-                # if use_wandb and best_checkpoint_path:
-                #      hybrid_logger.log_model(best_checkpoint_path, "best_model_checkpoint")
+                # TODO: Логирование
             else:
-                logger.warning("Could not find a best checkpoint for the best trial.")
-            # --- Конец исправления ---
+                logger.warning("Could not find a best checkpoint.")
             logger.info(f"Best trial final results: {best_trial.last_result}")
-
         else:
-             logger.warning("Could not determine the best trial based on 'episode_reward_mean'.")
+             logger.warning("Could not determine the best trial.")
 
-        # Сохраняем PokerConfig (если есть метод save)
         # if hasattr(poker_config, 'save'): poker_config.save()
 
 
@@ -190,18 +189,14 @@ def train_poker():
 
     finally:
         logger.info("\n=== Cleanup ===")
-        # if use_wandb and wandb.run is not None:
-        #      wandb.finish()
+        # if use_wandb and wandb.run is not None: wandb.finish()
         ray.shutdown()
         logger.info("Ray shutdown completed.")
-        if run_successful:
-             logger.info("Training process finished successfully.")
-        else:
-             logger.error("Training process failed.")
+        if run_successful: logger.info("Training process finished successfully.")
+        else: logger.error("Training process failed.")
 
 
 if __name__ == "__main__":
-    # Устанавливаем переменные окружения
     os.environ["OMP_NUM_THREADS"] = "1"
     os.environ["MKL_NUM_THREADS"] = "1"
     train_poker()
