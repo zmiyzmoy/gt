@@ -1,0 +1,207 @@
+# train.py
+import os
+import sys
+import logging
+import ray
+from ray import tune
+from ray.rllib.algorithms.ppo import PPOConfig
+from ray.tune.registry import register_env
+# import wandb # Раскомментируй, если используешь W&B
+# from ray.tune.integration.wandb import WandbLoggerCallback # Путь для Ray 2.10 может быть другим
+import numpy as np
+from pathlib import Path
+
+# Импортируем наши модули
+from config import PokerConfig, TrainingConfig
+from environment import PokerEnv
+# Убедись, что models.py существует и содержит AdvancedPokerModel
+from models import AdvancedPokerModel
+
+# Настраиваем логирование
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.StreamHandler(sys.stdout),
+        logging.FileHandler('poker_training.log', mode='a') # Дозапись в лог-файл
+    ]
+)
+logger = logging.getLogger(__name__)
+
+# Устанавливаем режим W&B (если используется)
+# if not os.environ.get("WANDB_API_KEY"):
+#     os.environ["WANDB_MODE"] = "offline"
+
+def setup_wandb(config: TrainingConfig):
+    """Настройка Weights & Biases (опционально)"""
+    # if config.wandb_project and os.environ.get("WANDB_MODE") != "disabled":
+    #     try:
+    #         wandb.init(...) # Настройка W&B init
+    #         logger.info("W&B initialized...")
+    #         return True
+    #     except Exception as e:
+    #         logger.warning(f"Failed to initialize W&B: {e}. Disabling.")
+    #         os.environ["WANDB_MODE"] = "disabled"
+    return False # Возвращаем False, если W&B не используется
+
+
+def create_env(env_config):
+    """Фабрика для создания экземпляра среды."""
+    return PokerEnv(env_config)
+
+def train_poker():
+    """Основная функция обучения."""
+    run_successful = False
+    try:
+        logger.info("\n=== Starting poker training ===")
+
+        # Инициализируем конфигурации
+        poker_config = PokerConfig()
+        training_config = TrainingConfig()
+        # Связываем model_config
+        training_config.model = poker_config.model_config
+
+        # Настраиваем W&B (если нужно)
+        use_wandb = setup_wandb(training_config)
+
+        # --- Инициализируем Ray ---
+        available_cpus = os.cpu_count() or 12
+        num_workers = min(training_config.num_workers, available_cpus - 1)
+        if num_workers != training_config.num_workers:
+             logger.warning(f"Reduced num_workers from {training_config.num_workers} to {num_workers}")
+
+        ray.init(
+            num_cpus=num_workers + 1,
+            num_gpus=training_config.num_gpus,
+            logging_level=logging.INFO,
+            ignore_reinit_error=True
+        )
+        logger.info(f"Ray initialized. Dashboard URL: {ray.get_dashboard_url()}")
+
+        # Регистрируем окружение
+        register_env("PokerEnv", create_env)
+
+        # --- Настраиваем PPOConfig для Ray 2.10.0 ---
+        logger.info("Configuring PPO algorithm for Ray 2.10.0...")
+        ppo_config_builder = (
+            PPOConfig()
+            .environment(env="PokerEnv", env_config={"config": poker_config})
+            .framework("torch")
+            .training(
+                gamma=training_config.gamma,
+                lr=training_config.lr,
+                lambda_=training_config.lambda_,
+                clip_param=training_config.clip_param,
+                vf_loss_coeff=training_config.vf_loss_coeff,
+                entropy_coeff=training_config.entropy_coeff,
+                train_batch_size=training_config.train_batch_size,
+                sgd_minibatch_size=training_config.sgd_minibatch_size,
+                num_sgd_iter=training_config.num_sgd_iter, # Используем num_sgd_iter
+                model=training_config.model
+            )
+            .rollouts( # Используем rollouts для Ray 2.10
+                num_rollout_workers=num_workers,
+                num_envs_per_worker=training_config.num_envs_per_worker,
+                rollout_fragment_length=training_config.rollout_fragment_length,
+                batch_mode=training_config.batch_mode
+            )
+            .resources( # Ресурсы для Ray 2.10
+                num_gpus=training_config.num_gpus,
+                num_cpus_per_worker=training_config.num_cpus_per_worker,
+                num_gpus_per_worker=training_config.num_gpus_per_worker
+            )
+            .evaluation( # Оценка для Ray 2.10
+                evaluation_interval=training_config.evaluation_interval,
+                evaluation_duration=training_config.evaluation_duration,
+                evaluation_num_workers=training_config.evaluation_num_workers,
+                evaluation_parallel_to_training=training_config.evaluation_parallel_to_training,
+                evaluation_config={"explore": False}
+            )
+            .debugging(log_level=training_config.log_level)
+            # .callbacks(PokerCallbacks) # Если нужны RLlib callbacks
+        )
+        final_ppo_config = ppo_config_builder.to_dict()
+        logger.info("PPOConfig configured.")
+
+
+        # --- Запускаем обучение с Ray Tune (classic API) ---
+        logger.info(f"Starting Ray Tune experiment '{training_config.tune_exp_name}'...")
+        # Используем local_dir для Ray 2.10
+        local_dir_path = Path(training_config.local_dir)
+        storage_path = str(local_dir_path.parent.resolve()) # Родительская папка
+        exp_dir_name = local_dir_path.name # Имя папки эксперимента
+
+        logger.info(f"Results will be stored under: {storage_path}")
+        local_dir_path.mkdir(parents=True, exist_ok=True)
+
+        # Определяем колбэки для Tune (если используем W&B)
+        tune_callbacks = []
+        # if use_wandb:
+        #      try:
+        #           # Попробуй импорт для Ray 2.10
+        #           from ray.tune.integration.wandb import WandbLoggerCallback
+        #           # Или from ray.tune.logger.wandb import WandbLoggerCallback
+        #           tune_callbacks.append(WandbLoggerCallback(project=training_config.wandb_project))
+        #           logger.info("Using WandbLoggerCallback for Ray Tune.")
+        #      except ImportError:
+        #           logger.warning("Could not import WandbLoggerCallback for Ray 2.10. W&B logging via Tune callback disabled.")
+
+        analysis = tune.run(
+            "PPO",
+            name=exp_dir_name, # Имя папки эксперимента
+            config=final_ppo_config,
+            stop={"training_iteration": training_config.num_iterations},
+            local_dir=storage_path, # Родительская папка
+            checkpoint_freq=training_config.checkpoint_freq,
+            checkpoint_at_end=training_config.checkpoint_at_end,
+            keep_checkpoints_num=training_config.keep_checkpoints_num,
+            verbose=1,
+            # fail_fast=True,
+            # max_failures=0,
+            # callbacks=tune_callbacks,
+            # resume="AUTO"
+        )
+
+        logger.info("\n=== Training completed ===")
+        run_successful = True
+
+        # Анализируем результаты
+        best_trial = analysis.get_best_trial(metric="episode_reward_mean", mode="max", scope="last")
+        if best_trial:
+            best_checkpoint_dict = analysis.get_best_checkpoint(trial=best_trial, metric="episode_reward_mean", mode="max")
+            # В Ray 2.10 get_best_checkpoint возвращает словарь или путь
+            best_checkpoint_path = best_checkpoint_dict if isinstance(best_checkpoint_dict, str) else best_checkpoint_dict.get("filesystem", {}).get("path")
+
+            logger.info(f"Best trial final results: {best_trial.last_result}")
+            logger.info(f"Best checkpoint found at: {best_checkpoint_path}")
+
+            # TODO: Логирование лучшей модели в W&B
+            # if use_wandb and best_checkpoint_path:
+            #      hybrid_logger.log_model(best_checkpoint_path, "best_model_checkpoint")
+        else:
+             logger.warning("Could not determine the best trial based on 'episode_reward_mean'.")
+
+        # Сохраняем PokerConfig
+        # poker_config.save() # Метод save у тебя в config.py не реализован
+
+
+    except Exception as e:
+        logger.error(f"\nCritical error during training: {e}", exc_info=True)
+
+    finally:
+        logger.info("\n=== Cleanup ===")
+        # if use_wandb and wandb.run is not None:
+        #      wandb.finish()
+        ray.shutdown()
+        logger.info("Ray shutdown completed.")
+        if run_successful:
+             logger.info("Training process finished successfully.")
+        else:
+             logger.error("Training process failed.")
+
+
+if __name__ == "__main__":
+    # Устанавливаем переменные окружения
+    os.environ["OMP_NUM_THREADS"] = "1"
+    os.environ["MKL_NUM_THREADS"] = "1"
+    train_poker()
