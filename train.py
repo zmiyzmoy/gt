@@ -56,13 +56,13 @@ def train_poker(poker_cfg: PokerConfig, train_cfg: TrainingConfig):
         PPOConfig()
         .environment(env=PokerEnv, env_config=env_creator_config)
         .framework("torch")
-        .resources( # Отвечает за ресурсы ТРЕНЕРА
-            num_gpus=train_cfg.num_gpus, # GPU для тренера
+        .resources( # Отвечает за ресурсы ТРЕНЕРА и ВОРКЕРОВ
+            num_gpus=train_cfg.num_gpus, # GPU для тренера (основного процесса)
+            num_cpus_per_worker=train_cfg.num_cpus_per_worker, # Ресурсы НА КАЖДОГО воркера
+            num_gpus_per_worker=train_cfg.num_gpus_per_worker, # Ресурсы НА КАЖДОГО воркера
         )
-        .rollouts( # Отвечает за сбор данных (воркеры)
-            num_rollout_workers=train_cfg.num_workers, # Задаем кол-во воркеров здесь
-            num_cpus_per_worker=train_cfg.num_cpus_per_worker, # Ресурсы НА ВОЛКЕР
-            num_gpus_per_worker=train_cfg.num_gpus_per_worker, # Ресурсы НА ВОЛКЕР
+        .rollouts( # Отвечает за количество воркеров и параметры сбора данных
+            num_rollout_workers=train_cfg.num_workers, # Задаем КОЛИЧЕСТВО воркеров
             num_envs_per_worker=train_cfg.num_envs_per_worker,
             rollout_fragment_length=train_cfg.rollout_fragment_length,
             batch_mode=train_cfg.batch_mode,
@@ -82,21 +82,20 @@ def train_poker(poker_cfg: PokerConfig, train_cfg: TrainingConfig):
         .evaluation( # Параметры оценки
             evaluation_interval=train_cfg.evaluation_interval,
             evaluation_duration=train_cfg.evaluation_duration,
-            evaluation_num_workers=train_cfg.evaluation_num_workers,
+            evaluation_num_workers=train_cfg.evaluation_num_workers, # Количество воркеров для оценки
             evaluation_parallel_to_training=train_cfg.evaluation_parallel_to_training,
+            # Ресурсы для evaluation workers наследуются из .resources() по умолчанию.
             # Передаем evaluation_config через `overrides` для правильного применения
-            evaluation_config=PPOConfig.overrides(**train_cfg.evaluation_config),
-            # Если evaluation воркерам нужны другие ресурсы, их тоже надо указать через overrides:
-            # evaluation_config=PPOConfig.overrides(
-            #     num_cpus_per_worker=...,
-            #     num_gpus_per_worker=...,
-            #     **train_cfg.evaluation_config # Добавляем остальные eval параметры
-            # )
+            evaluation_config=PPOConfig.overrides(
+                 # Если нужны ДРУГИЕ ресурсы для evaluation, раскомментируйте и задайте:
+                 # num_cpus_per_worker=...,
+                 # num_gpus_per_worker=...,
+                 **train_cfg.evaluation_config # Добавляем остальные параметры оценки (explore=False и т.д.)
+             )
         )
         .debugging(log_level=train_cfg.log_level)
     )
     # --- КОНЕЦ ИСПРАВЛЕНИЯ ---
-
 
     # Создание директории для эксперимента
     exp_dir = Path(train_cfg.local_dir) / train_cfg.exp_name
@@ -130,25 +129,24 @@ def train_poker(poker_cfg: PokerConfig, train_cfg: TrainingConfig):
             verbose=1
         )
         logger.info("Training finished.")
-        best_trial = analysis.get_best_trial("episode_reward_mean", mode="max", scope="last")
-        if best_trial:
-             logger.info(f"Best trial config: {pretty_print(best_trial.config)}")
-             # В Ray 2.x результаты могут быть в другом месте
-             # Попробуем получить последний результат явно
-             last_result = analysis.get_best_result(metric="episode_reward_mean", mode="max")
-             if last_result:
-                logger.info(f"Best trial final validation reward: {last_result.metrics.get('episode_reward_mean', 'N/A')}")
-             else:
-                logger.warning("Could not retrieve last result for best trial.")
-             # Получение лучшего чекпоинта
-             best_checkpoint_result = analysis.get_best_checkpoint(trial=best_trial, metric='episode_reward_mean', mode='max')
-             if best_checkpoint_result:
-                  logger.info(f"Best trial checkpoint path: {best_checkpoint_result.path}") # Используем .path
-             else:
-                  logger.warning("Could not retrieve best checkpoint for best trial.")
+        # Получение результатов (адаптировано для Ray 2.x)
+        best_result = analysis.get_best_result(metric="evaluation/episode_reward_mean", mode="max") # Ищем по метрике оценки
+        if not best_result: # Если оценка не проводилась или метрика не найдена, пробуем по награде обучения
+             best_result = analysis.get_best_result(metric="episode_reward_mean", mode="max")
 
+        if best_result:
+             logger.info(f"Best trial config: {pretty_print(best_result.config)}")
+             logger.info(f"Best trial final metrics: {pretty_print(best_result.metrics)}")
+             # Получение лучшего чекпоинта для лучшего результата
+             best_checkpoint_result = best_result.best_checkpoints # best_checkpoints - список кортежей (checkpoint, metric)
+             if best_checkpoint_result:
+                  # Берем чекпоинт с лучшей метрикой (обычно первый в отсортированном списке)
+                  best_checkpoint_path = best_checkpoint_result[0][0].path
+                  logger.info(f"Best trial checkpoint path: {best_checkpoint_path}")
+             else:
+                  logger.warning("Could not retrieve best checkpoint for the best trial result.")
         else:
-             logger.warning("Could not determine the best trial.")
+             logger.warning("Could not determine the best trial result.")
 
         return analysis
 
