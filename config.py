@@ -26,7 +26,6 @@ class PokerConfig:
     })
 
     def __post_init__(self):
-        # --- Заполнение game_config для OpenSpiel 1.3 ---
         if not self.game_config:
             self.game_config = {
                 "betting": "nolimit",
@@ -35,9 +34,9 @@ class PokerConfig:
                 "numSuits": "4",
                 "numRanks": "13",
                 "numHoleCards": "2",
-                "numBoardCards": "0 3 1 1", # Строка для списка
+                "numBoardCards": "0 3 1 1",
                 "stack": str(self.starting_stack),
-                "blind": f"{self.small_blind} {self.big_blind}" # Строка для списка
+                "blind": f"{self.small_blind} {self.big_blind}"
             }
         temp_config = {}
         for k, v in self.game_config.items():
@@ -63,7 +62,7 @@ class TrainingConfig:
 
     # --- Параметры Алгоритма PPO (для Ray RLlib PPOConfig v2.10) ---
     # Ресурсы
-    num_workers: int = 6 # <--- ИЗМЕНЕНО ЗДЕСЬ (было 7)
+    num_workers: int = 6 # Оставляем 6
     num_gpus: int = 1
     num_cpus_per_worker: int = 1
     num_gpus_per_worker: float = 0.0
@@ -88,7 +87,7 @@ class TrainingConfig:
     evaluation_interval: int = 20
     evaluation_duration: int = 10
     evaluation_num_workers: int = 1
-    evaluation_parallel_to_training: bool = True
+    evaluation_parallel_to_training: bool = False # <--- ИЗМЕНЕНО ЗДЕСЬ!
 
     # Модель (ссылка на PokerConfig.model_config)
     model: Dict[str, Any] = field(default_factory=dict)
