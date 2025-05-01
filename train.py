@@ -7,7 +7,7 @@ from ray import tune
 from ray.rllib.algorithms.ppo import PPOConfig
 from ray.tune.registry import register_env
 # import wandb # Раскомментируй, если используешь W&B
-# from ray.tune.integration.wandb import WandbLoggerCallback # Путь для Ray 2.10 может быть другим
+# from ray.tune.logger import WandbLoggerCallback # Импорт для W&B в Ray 2.10
 import numpy as np
 from pathlib import Path
 
@@ -23,7 +23,7 @@ logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[
         logging.StreamHandler(sys.stdout),
-        logging.FileHandler('poker_training.log', mode='a') # Дозапись в лог-файл
+        logging.FileHandler('poker_training.log', mode='a')
     ]
 )
 logger = logging.getLogger(__name__)
@@ -76,7 +76,10 @@ def train_poker():
             logging_level=logging.INFO,
             ignore_reinit_error=True
         )
-        logger.info(f"Ray initialized. Dashboard URL: {ray.get_dashboard_url()}")
+        # УБИРАЕМ СТРОКУ НИЖЕ, т.к. get_dashboard_url() нет в Ray 2.10
+        # logger.info(f"Ray initialized. Dashboard URL: {ray.get_dashboard_url()}")
+        logger.info("Ray initialized. View dashboard at http://127.0.0.1:8265 (default address)")
+
 
         # Регистрируем окружение
         register_env("PokerEnv", create_env)
@@ -96,21 +99,21 @@ def train_poker():
                 entropy_coeff=training_config.entropy_coeff,
                 train_batch_size=training_config.train_batch_size,
                 sgd_minibatch_size=training_config.sgd_minibatch_size,
-                num_sgd_iter=training_config.num_sgd_iter, # Используем num_sgd_iter
+                num_sgd_iter=training_config.num_sgd_iter,
                 model=training_config.model
             )
-            .rollouts( # Используем rollouts для Ray 2.10
+            .rollouts(
                 num_rollout_workers=num_workers,
                 num_envs_per_worker=training_config.num_envs_per_worker,
                 rollout_fragment_length=training_config.rollout_fragment_length,
                 batch_mode=training_config.batch_mode
             )
-            .resources( # Ресурсы для Ray 2.10
+            .resources(
                 num_gpus=training_config.num_gpus,
                 num_cpus_per_worker=training_config.num_cpus_per_worker,
                 num_gpus_per_worker=training_config.num_gpus_per_worker
             )
-            .evaluation( # Оценка для Ray 2.10
+            .evaluation(
                 evaluation_interval=training_config.evaluation_interval,
                 evaluation_duration=training_config.evaluation_duration,
                 evaluation_num_workers=training_config.evaluation_num_workers,
@@ -118,7 +121,7 @@ def train_poker():
                 evaluation_config={"explore": False}
             )
             .debugging(log_level=training_config.log_level)
-            # .callbacks(PokerCallbacks) # Если нужны RLlib callbacks
+            # .callbacks(PokerCallbacks)
         )
         final_ppo_config = ppo_config_builder.to_dict()
         logger.info("PPOConfig configured.")
@@ -126,32 +129,30 @@ def train_poker():
 
         # --- Запускаем обучение с Ray Tune (classic API) ---
         logger.info(f"Starting Ray Tune experiment '{training_config.tune_exp_name}'...")
-        # Используем local_dir для Ray 2.10
         local_dir_path = Path(training_config.local_dir)
         storage_path = str(local_dir_path.parent.resolve()) # Родительская папка
         exp_dir_name = local_dir_path.name # Имя папки эксперимента
 
-        logger.info(f"Results will be stored under: {storage_path}")
+        logger.info(f"Results will be stored under: {storage_path}/{exp_dir_name}")
         local_dir_path.mkdir(parents=True, exist_ok=True)
 
-        # Определяем колбэки для Tune (если используем W&B)
         tune_callbacks = []
         # if use_wandb:
         #      try:
         #           # Попробуй импорт для Ray 2.10
-        #           from ray.tune.integration.wandb import WandbLoggerCallback
-        #           # Или from ray.tune.logger.wandb import WandbLoggerCallback
-        #           tune_callbacks.append(WandbLoggerCallback(project=training_config.wandb_project))
-        #           logger.info("Using WandbLoggerCallback for Ray Tune.")
+        #           # from ray.tune.integration.wandb import WandbLoggerCallback
+        #           from ray.tune.logger import WandbLogger # В 2.10 может быть просто WandbLogger
+        #           tune_callbacks.append(WandbLogger(project=training_config.wandb_project))
+        #           logger.info("Using WandbLogger for Ray Tune.")
         #      except ImportError:
-        #           logger.warning("Could not import WandbLoggerCallback for Ray 2.10. W&B logging via Tune callback disabled.")
+        #           logger.warning("Could not import WandbLogger. W&B logging via Tune callback disabled.")
 
         analysis = tune.run(
             "PPO",
-            name=exp_dir_name, # Имя папки эксперимента
+            name=exp_dir_name,
             config=final_ppo_config,
             stop={"training_iteration": training_config.num_iterations},
-            local_dir=storage_path, # Родительская папка
+            local_dir=storage_path,
             checkpoint_freq=training_config.checkpoint_freq,
             checkpoint_at_end=training_config.checkpoint_at_end,
             keep_checkpoints_num=training_config.keep_checkpoints_num,
@@ -169,7 +170,6 @@ def train_poker():
         best_trial = analysis.get_best_trial(metric="episode_reward_mean", mode="max", scope="last")
         if best_trial:
             best_checkpoint_dict = analysis.get_best_checkpoint(trial=best_trial, metric="episode_reward_mean", mode="max")
-            # В Ray 2.10 get_best_checkpoint возвращает словарь или путь
             best_checkpoint_path = best_checkpoint_dict if isinstance(best_checkpoint_dict, str) else best_checkpoint_dict.get("filesystem", {}).get("path")
 
             logger.info(f"Best trial final results: {best_trial.last_result}")
@@ -181,8 +181,8 @@ def train_poker():
         else:
              logger.warning("Could not determine the best trial based on 'episode_reward_mean'.")
 
-        # Сохраняем PokerConfig
-        # poker_config.save() # Метод save у тебя в config.py не реализован
+        # Сохраняем PokerConfig (если есть метод save)
+        # if hasattr(poker_config, 'save'): poker_config.save()
 
 
     except Exception as e:
