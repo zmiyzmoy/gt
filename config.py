@@ -48,7 +48,7 @@ class PokerConfig:
 class TrainingConfig:
     # --- Общие параметры Эксперимента ---
     exp_name: str = f"poker_prod_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-    local_dir: str = "./ray_results"
+    local_dir: str = "./ray_results" # Используем local_dir для Ray 2.10
 
     # --- Параметры Обучения (для Ray Tune) ---
     num_iterations: int = 1000
@@ -62,7 +62,7 @@ class TrainingConfig:
 
     # --- Параметры Алгоритма PPO (для Ray RLlib PPOConfig v2.10) ---
     # Ресурсы
-    num_workers: int = 10
+    num_workers: int = 8 # <--- ИЗМЕНЕНО ЗДЕСЬ (было 9)
     num_gpus: int = 1
     num_cpus_per_worker: int = 1
     num_gpus_per_worker: float = 0.0
@@ -80,7 +80,7 @@ class TrainingConfig:
     num_sgd_iter: int = 10
 
     # Параметры Rollout
-    rollout_fragment_length: str = "auto" # <--- ИЗМЕНЕНО ЗДЕСЬ!
+    rollout_fragment_length: str = "auto" # Оставляем auto
     batch_mode: str = "truncate_episodes"
 
     # Параметры Evaluation
