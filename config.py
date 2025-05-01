@@ -26,6 +26,7 @@ class PokerConfig:
     })
 
     def __post_init__(self):
+        # --- Заполнение game_config для OpenSpiel 1.3 ---
         if not self.game_config:
             self.game_config = {
                 "betting": "nolimit",
@@ -34,9 +35,9 @@ class PokerConfig:
                 "numSuits": "4",
                 "numRanks": "13",
                 "numHoleCards": "2",
-                "numBoardCards": "0 3 1 1",
+                "numBoardCards": "0 3 1 1", # Строка для списка
                 "stack": str(self.starting_stack),
-                "blind": f"{self.small_blind} {self.big_blind}"
+                "blind": f"{self.small_blind} {self.big_blind}" # Строка для списка
             }
         temp_config = {}
         for k, v in self.game_config.items():
@@ -62,7 +63,7 @@ class TrainingConfig:
 
     # --- Параметры Алгоритма PPO (для Ray RLlib PPOConfig v2.10) ---
     # Ресурсы
-    num_workers: int = 8 # <--- ИЗМЕНЕНО ЗДЕСЬ (было 9)
+    num_workers: int = 7 # <--- ИЗМЕНЕНО ЗДЕСЬ (было 9)
     num_gpus: int = 1
     num_cpus_per_worker: int = 1
     num_gpus_per_worker: float = 0.0
@@ -75,18 +76,18 @@ class TrainingConfig:
     clip_param: float = 0.2
     vf_loss_coeff: float = 0.5
     entropy_coeff: float = 0.01
-    train_batch_size: int = 8192
+    train_batch_size: int = 8192 # Ray подстроит rollout_fragment_length
     sgd_minibatch_size: int = 1024
     num_sgd_iter: int = 10
 
     # Параметры Rollout
-    rollout_fragment_length: str = "auto" # Оставляем auto
+    rollout_fragment_length: str = "auto"
     batch_mode: str = "truncate_episodes"
 
     # Параметры Evaluation
     evaluation_interval: int = 20
     evaluation_duration: int = 10
-    evaluation_num_workers: int = 1
+    evaluation_num_workers: int = 1 # Отдельный воркер для оценки
     evaluation_parallel_to_training: bool = True
 
     # Модель (ссылка на PokerConfig.model_config)
