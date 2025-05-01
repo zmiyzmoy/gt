@@ -1,208 +1,198 @@
 # train.py
+import argparse
 import os
-import sys
 import logging
-import ray
-from ray import tune
-from ray.rllib.algorithms.ppo import PPOConfig
-from ray.tune.registry import register_env
-# import wandb # Раскомментируй, если используешь W&B
-# from ray.tune.logger import WandbLogger # Импорт для W&B в Ray 2.10
-import numpy as np
 from pathlib import Path
-# --- ИМПОРТЫ ДЛЯ РАСЧЕТА РЕСУРСОВ В Ray 2.10 ---
-from ray.rllib.algorithms.ppo import PPO
-# --------------------------------------------
+import numpy as np
 
-# Импортируем наши модули
+import ray
+from ray import air, tune
+from ray.rllib.algorithms.ppo import PPOConfig
+from ray.rllib.models import ModelCatalog # <<< ИМПОРТ ДЛЯ РЕГИСТРАЦИИ
+from ray.tune.logger import pretty_print,బెటర్ Logger, TBXLoggerCallback # Добавим TensorBoard логгер
+# Импортируем конфиги и среду
 from config import PokerConfig, TrainingConfig
 from environment import PokerEnv
-from models import AdvancedPokerModel # Убедись, что models.py есть
+from loggers import WandbLoggerCallback # Ваш логгер W&B
+from models import AdvancedPokerModel # <<< ИМПОРТ КАСТОМНОЙ МОДЕЛИ
 
-# Настраиваем логирование
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.StreamHandler(sys.stdout),
-        logging.FileHandler('poker_training.log', mode='a')
-    ]
-)
+# Настройка логирования для основного скрипта
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-# Устанавливаем режим W&B (если используется)
-# if not os.environ.get("WANDB_API_KEY"):
-#     os.environ["WANDB_MODE"] = "offline"
-
-def setup_wandb(config: TrainingConfig):
-    """Настройка Weights & Biases (опционально)"""
-    # if config.wandb_project and os.environ.get("WANDB_MODE") != "disabled":
-    #     try:
-    #         wandb.init(...) # Настройка W&B init
-    #         logger.info("W&B initialized...")
-    #         return True
-    #     except Exception as e:
-    #         logger.warning(f"Failed to initialize W&B: {e}. Disabling.")
-    #         os.environ["WANDB_MODE"] = "disabled"
-    return False
-
-
 def create_env(env_config):
-    """Фабрика для создания экземпляра среды."""
+    """Фабричная функция для создания экземпляра среды."""
+    # env_config будет содержать {'config': PokerConfig(...), 'dtype': np.float32}
+    # или то, что передано через algo_config.environment()
     return PokerEnv(env_config)
 
-def train_poker():
-    """Основная функция обучения."""
-    run_successful = False
+def train_poker(poker_cfg: PokerConfig, train_cfg: TrainingConfig):
+    """Основная функция для настройки и запуска обучения."""
+    logger.info("Starting training setup...")
+
+    # --- ИСПРАВЛЕНО: Регистрация кастомной модели ---
     try:
-        logger.info("\n=== Starting poker training ===")
+        ModelCatalog.register_custom_model("AdvancedPokerModel", AdvancedPokerModel)
+        logger.info(f"Custom model '{poker_cfg.model_config['custom_model']}' registered successfully.")
+    except Exception as e:
+         logger.error(f"Failed to register custom model: {e}", exc_info=True)
+         raise # Прерываем выполнение, если модель не зарегистрирована
 
-        poker_config = PokerConfig()
-        training_config = TrainingConfig()
-        training_config.model = poker_config.model_config
-
-        use_wandb = setup_wandb(training_config)
-
-        # --- Инициализируем Ray ---
-        available_cpus = os.cpu_count() or 12
-        # Корректируем num_workers (6 + 1 eval + 1 driver <= 8 CPU)
-        num_workers = 6
-        logger.info(f"Setting num_workers to {num_workers}")
-
-        ray.init(
-            num_cpus=num_workers + 2, # Явно указываем CPU для Ray 2.10
-            num_gpus=training_config.num_gpus,
-            logging_level=logging.INFO,
-            ignore_reinit_error=True
-        )
-        logger.info(f"Ray sees AVAILABLE resources: {ray.available_resources()}")
-        logger.info("Ray initialized. View dashboard at http://127.0.0.1:8265 (default address)")
-
-        register_env("PokerEnv", create_env)
-
-        # --- Настраиваем PPOConfig для Ray 2.10.0 ---
-        logger.info("Configuring PPO algorithm for Ray 2.10.0...")
-        ppo_config_builder = (
-            PPOConfig()
-            .environment(env="PokerEnv", env_config={"config": poker_config})
-            .framework("torch")
-            .training(
-                gamma=training_config.gamma,
-                lr=training_config.lr,
-                lambda_=training_config.lambda_,
-                clip_param=training_config.clip_param,
-                vf_loss_coeff=training_config.vf_loss_coeff,
-                entropy_coeff=training_config.entropy_coeff,
-                train_batch_size=training_config.train_batch_size,
-                sgd_minibatch_size=training_config.sgd_minibatch_size,
-                num_sgd_iter=training_config.num_sgd_iter,
-                model=training_config.model
-            )
-            .rollouts(
-                num_rollout_workers=num_workers,
-                num_envs_per_worker=training_config.num_envs_per_worker,
-                rollout_fragment_length=training_config.rollout_fragment_length,
-                batch_mode=training_config.batch_mode
-            )
-            .resources(
-                num_gpus=training_config.num_gpus,
-                num_cpus_per_worker=training_config.num_cpus_per_worker,
-                num_gpus_per_worker=training_config.num_gpus_per_worker
-            )
-            .evaluation(
-                evaluation_interval=training_config.evaluation_interval,
-                evaluation_duration=training_config.evaluation_duration,
-                evaluation_num_workers=training_config.evaluation_num_workers,
-                evaluation_parallel_to_training=False, # Отключили для экономии CPU
-                evaluation_config={"explore": False}
-            )
-            .debugging(log_level=training_config.log_level)
-            # .callbacks(PokerCallbacks)
-        )
-        final_ppo_config_dict = ppo_config_builder.to_dict()
-
-        # --- Печатаем РАССЧИТАННЫЙ ЗАПРОС РЕСУРСОВ ---
+    # Настройка Ray
+    if not ray.is_initialized():
         try:
-             calculated_resources = PPO.default_resource_request(final_ppo_config_dict)
-             logger.info(f"RLlib CALCULATED resource request per trial: {calculated_resources}")
-             # Проверяем, хватает ли ресурсов
-             available = ray.available_resources()
-             needed_cpu = calculated_resources.required_resources.get("CPU", 0)
-             needed_gpu = calculated_resources.required_resources.get("GPU", 0)
-             if needed_cpu > available.get("CPU", 0) or needed_gpu > available.get("GPU", 0):
-                  logger.error(f"Insufficient resources! Needed: CPU={needed_cpu}, GPU={needed_gpu}. Available: {available}")
-                  # Можно здесь выйти или скорректировать конфиг
-                  # raise RuntimError("Not enough resources")
+            # Попробуем явно указать каталог для логов ray
+            # runtime_env = {"working_dir": str(Path(__file__).parent.resolve())} # Если нужно указать рабочую директорию
+            ray.init(
+                # dashboard_host='0.0.0.0', # Если нужен доступ к dashboard извне
+                # runtime_env=runtime_env,
+                logging_level=train_cfg.log_level, # Уровень логов Ray
+                log_to_driver=True # Выводить логи воркеров в драйвер
+            )
+            logger.info("Ray initialized successfully.")
         except Exception as e:
-             logger.warning(f"Could not calculate/validate resources: {e}")
-        # ------------------------------------------
-        logger.info("PPOConfig configured.")
+            logger.error(f"Failed to initialize Ray: {e}", exc_info=True)
+            raise
 
+    # Конфигурация алгоритма PPO
+    env_creator_config = {"config": poker_cfg, "dtype": np.float32} # Передаем конфиг игры и dtype
 
-        # --- Запускаем обучение с Ray Tune (classic API) ---
-        logger.info(f"Starting Ray Tune experiment '{training_config.tune_exp_name}'...")
-        local_dir_path = Path(training_config.local_dir)
-        storage_parent_path = str(local_dir_path.parent.resolve())
-        exp_dir_name = training_config.tune_exp_name # Используем уникальное имя
-
-        logger.info(f"Results will be stored under: {storage_parent_path}")
-        # Tune сам создаст папку эксперимента
-
-        tune_callbacks = []
-        # ... (W&B callback) ...
-
-        analysis = tune.run(
-            "PPO",
-            name=exp_dir_name,
-            config=final_ppo_config_dict,
-            stop={"training_iteration": training_config.num_iterations},
-            local_dir=storage_parent_path,
-            checkpoint_freq=training_config.checkpoint_freq,
-            checkpoint_at_end=training_config.checkpoint_at_end,
-            keep_checkpoints_num=training_config.keep_checkpoints_num,
-            verbose=1,
-            # fail_fast=True,
-            # max_failures=0,
-            # callbacks=tune_callbacks,
-            # resume="AUTO"
+    algo_config = (
+        PPOConfig()
+        .environment(
+             env=PokerEnv, # Используем класс среды
+             env_config=env_creator_config # Передаем конфиг для env_creator
         )
+        .framework("torch") # Используем PyTorch
+        .resources(
+            num_gpus=train_cfg.num_gpus,
+            num_workers=train_cfg.num_workers,
+            num_cpus_per_worker=train_cfg.num_cpus_per_worker,
+            num_gpus_per_worker=train_cfg.num_gpus_per_worker,
+        )
+        .rollouts(
+            num_rollout_workers=train_cfg.num_workers,
+            num_envs_per_worker=train_cfg.num_envs_per_worker,
+            rollout_fragment_length=train_cfg.rollout_fragment_length,
+            batch_mode=train_cfg.batch_mode,
+        )
+        .training(
+            gamma=train_cfg.gamma,
+            lr=train_cfg.lr,
+            lambda_=train_cfg.lambda_,
+            clip_param=train_cfg.clip_param,
+            vf_loss_coeff=train_cfg.vf_loss_coeff,
+            entropy_coeff=train_cfg.entropy_coeff,
+            train_batch_size=train_cfg.train_batch_size,
+            sgd_minibatch_size=train_cfg.sgd_minibatch_size,
+            num_sgd_iter=train_cfg.num_sgd_iter,
+            model=train_cfg.model, # Передаем конфиг модели ИЗ TrainingConfig
+        )
+        .evaluation(
+            evaluation_interval=train_cfg.evaluation_interval,
+            evaluation_duration=train_cfg.evaluation_duration,
+            evaluation_num_workers=train_cfg.evaluation_num_workers,
+            evaluation_parallel_to_training=train_cfg.evaluation_parallel_to_training,
+            evaluation_config=train_cfg.evaluation_config # Передаем evaluation_config
+            # Можно также передать env_config для оценки, если он отличается
+            # .evaluation(..., evaluation_config=AlgorithmConfig.overrides(env_config=eval_env_config))
+        )
+        .debugging(log_level=train_cfg.log_level) # Уровень логов RLlib
+    )
 
-        logger.info("\n=== Training completed ===")
-        run_successful = True
+    # Создание директории для эксперимента
+    exp_dir = Path(train_cfg.local_dir) / train_cfg.exp_name
+    exp_dir.mkdir(parents=True, exist_ok=True)
+    logger.info(f"Experiment results will be saved to: {exp_dir}")
 
-        # Анализируем результаты
-        best_trial = analysis.get_best_trial(metric="episode_reward_mean", mode="max", scope="last")
+    # Настройка логгеров для Ray Tune
+    callbacks = [
+        # Логгер по умолчанию (выводит в консоль и файлы json/csv)
+        # BetterLogger(log_dir=str(exp_dir)), # Заменен стандартным выводом Tune
+        # Логгер для TensorBoard
+        TBXLoggerCallback(),
+        # Ваш кастомный логгер W&B
+        WandbLoggerCallback(
+            project=train_cfg.wandb_project,
+            # api_key_file=train_cfg.wandb_api_key_file, # Если используете файл
+            # api_key="YOUR_API_KEY", # Или передаете ключ напрямую
+            log_config=True,
+            config={**poker_cfg.__dict__, **train_cfg.__dict__} # Логируем оба конфига
+        )
+    ]
+
+    # Параметры остановки обучения
+    stop = {
+        "training_iteration": train_cfg.num_iterations,
+    }
+
+    # Запуск эксперимента Ray Tune
+    logger.info(f"Starting Ray Tune experiment: {train_cfg.tune_exp_name}")
+    try:
+        analysis = tune.run(
+            "PPO", # Используем зарегистрированный PPO
+            name=train_cfg.tune_exp_name, # Имя эксперимента в Tune
+            config=algo_config.to_dict(), # Передаем конфиг как словарь
+            stop=stop,
+            local_dir=train_cfg.local_dir, # Базовая директория для всех экспериментов
+            checkpoint_freq=train_cfg.checkpoint_freq,
+            checkpoint_at_end=train_cfg.checkpoint_at_end,
+            keep_checkpoints_num=train_cfg.keep_checkpoints_num,
+            # resources_per_trial=PPO.default_resource_request(algo_config), # Ray обычно определяет ресурсы сам
+            callbacks=callbacks,
+            verbose=1 # 0 = тихо, 1 = статус + таблица, 2 = подробно, 3 = очень подробно
+        )
+        logger.info("Training finished.")
+        # Вывод лучшего результата
+        best_trial = analysis.get_best_trial("episode_reward_mean", mode="max", scope="last")
         if best_trial:
-            best_checkpoint_dict = analysis.get_best_checkpoint(trial=best_trial, metric="episode_reward_mean", mode="max")
-            if best_checkpoint_dict:
-                best_checkpoint_path = best_checkpoint_dict if isinstance(best_checkpoint_dict, str) else best_checkpoint_dict.get("path")
-                logger.info(f"Best checkpoint found at: {best_checkpoint_path}")
-                # TODO: Логирование
-            else:
-                logger.warning("Could not find a best checkpoint.")
-            logger.info(f"Best trial final results: {best_trial.last_result}")
+             logger.info(f"Best trial config: {pretty_print(best_trial.config)}")
+             logger.info(f"Best trial final validation reward: {best_trial.last_result['episode_reward_mean']}")
+             logger.info(f"Best trial checkpoint path: {analysis.get_best_checkpoint(best_trial, metric='episode_reward_mean', mode='max')}")
         else:
              logger.warning("Could not determine the best trial.")
 
-        # Сохраняем PokerConfig (если есть метод save)
-        if hasattr(poker_config, 'save') and callable(poker_config.save):
-             # Нужен метод save в PokerConfig
-             pass # poker_config.save()
-
+        return analysis
 
     except Exception as e:
         logger.error(f"\nCritical error during training: {e}", exc_info=True)
+        # Попытка поймать TuneError для более специфичного сообщения
+        if isinstance(e, tune.error.TuneError):
+             logger.error(f"TuneError details: {e.args}")
+        # Поднять исключение дальше, чтобы скрипт завершился с ошибкой
+        raise
 
     finally:
         logger.info("\n=== Cleanup ===")
-        # if use_wandb and wandb.run is not None: wandb.finish()
         ray.shutdown()
         logger.info("Ray shutdown completed.")
-        if run_successful: logger.info("Training process finished successfully.")
-        else: logger.error("Training process failed.")
 
 
 if __name__ == "__main__":
-    os.environ["OMP_NUM_THREADS"] = "1"
-    os.environ["MKL_NUM_THREADS"] = "1"
-    train_poker()
+    parser = argparse.ArgumentParser(description="Train a PPO agent for Poker.")
+    # Можно добавить аргументы для переопределения конфигов через командную строку
+    # parser.add_argument("--lr", type=float, help="Override learning rate")
+    # ...
+
+    args = parser.parse_args()
+
+    # Создание экземпляров конфигов
+    poker_config = PokerConfig()
+    training_config = TrainingConfig()
+
+    # Переопределение конфигов из аргументов командной строки (если нужно)
+    # if args.lr:
+    #     training_config.lr = args.lr
+    # ...
+
+    logger.info("--- Poker Configuration ---")
+    logger.info(pretty_print(poker_config.__dict__))
+    logger.info("--- Training Configuration ---")
+    logger.info(pretty_print(training_config.__dict__))
+
+    try:
+        train_poker(poker_config, training_config)
+        logger.info("Training process completed successfully.")
+    except Exception as e:
+        logger.error("Training process failed.", exc_info=False) # Не выводим Traceback второй раз
+        exit(1) # Выход с кодом ошибки
