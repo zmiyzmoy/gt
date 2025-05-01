@@ -10,10 +10,9 @@ from ray.tune.registry import register_env
 # from ray.tune.logger import WandbLogger # Импорт для W&B в Ray 2.10
 import numpy as np
 from pathlib import Path
-# --- ДОБАВЛЕН ИМПОРТ ---
-# Для Ray 2.10 нужен PPO класс для default_resource_request
+# --- ИМПОРТЫ ДЛЯ РАСЧЕТА РЕСУРСОВ В Ray 2.10 ---
 from ray.rllib.algorithms.ppo import PPO
-# -----------------------
+# --------------------------------------------
 
 # Импортируем наши модули
 from config import PokerConfig, TrainingConfig
@@ -45,7 +44,7 @@ def setup_wandb(config: TrainingConfig):
     #     except Exception as e:
     #         logger.warning(f"Failed to initialize W&B: {e}. Disabling.")
     #         os.environ["WANDB_MODE"] = "disabled"
-    return False # Возвращаем False, если W&B не используется
+    return False
 
 
 def create_env(env_config):
@@ -58,22 +57,20 @@ def train_poker():
     try:
         logger.info("\n=== Starting poker training ===")
 
-        # Инициализируем конфигурации
         poker_config = PokerConfig()
         training_config = TrainingConfig()
         training_config.model = poker_config.model_config
 
-        # Настраиваем W&B (если нужно)
         use_wandb = setup_wandb(training_config)
 
         # --- Инициализируем Ray ---
         available_cpus = os.cpu_count() or 12
-        # Устанавливаем num_workers = 5, как решили
-        num_workers = 5
+        # Корректируем num_workers (6 + 1 eval + 1 driver <= 8 CPU)
+        num_workers = 6
         logger.info(f"Setting num_workers to {num_workers}")
 
         ray.init(
-            num_cpus=available_cpus, # Используем все CPU, что видит ОС
+            num_cpus=num_workers + 2, # Явно указываем CPU для Ray 2.10
             num_gpus=training_config.num_gpus,
             logging_level=logging.INFO,
             ignore_reinit_error=True
@@ -81,8 +78,6 @@ def train_poker():
         logger.info(f"Ray sees AVAILABLE resources: {ray.available_resources()}")
         logger.info("Ray initialized. View dashboard at http://127.0.0.1:8265 (default address)")
 
-
-        # Регистрируем окружение
         register_env("PokerEnv", create_env)
 
         # --- Настраиваем PPOConfig для Ray 2.10.0 ---
@@ -104,37 +99,42 @@ def train_poker():
                 model=training_config.model
             )
             .rollouts(
-                num_rollout_workers=num_workers, # Используем установленное значение
+                num_rollout_workers=num_workers,
                 num_envs_per_worker=training_config.num_envs_per_worker,
                 rollout_fragment_length=training_config.rollout_fragment_length,
                 batch_mode=training_config.batch_mode
             )
-            .resources( # Ресурсы для Ray 2.10
-                num_gpus=training_config.num_gpus, # GPU для learner'а
+            .resources(
+                num_gpus=training_config.num_gpus,
                 num_cpus_per_worker=training_config.num_cpus_per_worker,
                 num_gpus_per_worker=training_config.num_gpus_per_worker
-                # УБИРАЕМ num_cpus_for_driver
             )
-            # --- ВРЕМЕННО ОТКЛЮЧАЕМ EVALUATION ---
-            # .evaluation(
-            #     evaluation_interval=training_config.evaluation_interval,
-            #     evaluation_duration=training_config.evaluation_duration,
-            #     evaluation_num_workers=training_config.evaluation_num_workers,
-            #     evaluation_parallel_to_training=False, # Отключаем параллельность
-            #     evaluation_config={"explore": False}
-            # )
+            .evaluation(
+                evaluation_interval=training_config.evaluation_interval,
+                evaluation_duration=training_config.evaluation_duration,
+                evaluation_num_workers=training_config.evaluation_num_workers,
+                evaluation_parallel_to_training=False, # Отключили для экономии CPU
+                evaluation_config={"explore": False}
+            )
             .debugging(log_level=training_config.log_level)
-            # .callbacks(PokerCallbacks) # Раскомментируй, если нужны
+            # .callbacks(PokerCallbacks)
         )
         final_ppo_config_dict = ppo_config_builder.to_dict()
 
-        # --- ПЕЧАТАЕМ РАССЧИТАННЫЙ ЗАПРОС РЕСУРСОВ ---
+        # --- Печатаем РАССЧИТАННЫЙ ЗАПРОС РЕСУРСОВ ---
         try:
-             # Для Ray 2.10 используем PPO класс напрямую
              calculated_resources = PPO.default_resource_request(final_ppo_config_dict)
              logger.info(f"RLlib CALCULATED resource request per trial: {calculated_resources}")
+             # Проверяем, хватает ли ресурсов
+             available = ray.available_resources()
+             needed_cpu = calculated_resources.required_resources.get("CPU", 0)
+             needed_gpu = calculated_resources.required_resources.get("GPU", 0)
+             if needed_cpu > available.get("CPU", 0) or needed_gpu > available.get("GPU", 0):
+                  logger.error(f"Insufficient resources! Needed: CPU={needed_cpu}, GPU={needed_gpu}. Available: {available}")
+                  # Можно здесь выйти или скорректировать конфиг
+                  # raise RuntimError("Not enough resources")
         except Exception as e:
-             logger.warning(f"Could not calculate default_resource_request: {e}")
+             logger.warning(f"Could not calculate/validate resources: {e}")
         # ------------------------------------------
         logger.info("PPOConfig configured.")
 
@@ -143,13 +143,13 @@ def train_poker():
         logger.info(f"Starting Ray Tune experiment '{training_config.tune_exp_name}'...")
         local_dir_path = Path(training_config.local_dir)
         storage_parent_path = str(local_dir_path.parent.resolve())
-        exp_dir_name = local_dir_path.name
+        exp_dir_name = training_config.tune_exp_name # Используем уникальное имя
 
-        logger.info(f"Results will be stored under: {storage_parent_path}/{exp_dir_name}")
-        # Tune сам создаст папку эксперимента, mkdir не нужен
+        logger.info(f"Results will be stored under: {storage_parent_path}")
+        # Tune сам создаст папку эксперимента
 
         tune_callbacks = []
-        # ... (W&B callback, если нужен) ...
+        # ... (W&B callback) ...
 
         analysis = tune.run(
             "PPO",
@@ -184,7 +184,10 @@ def train_poker():
         else:
              logger.warning("Could not determine the best trial.")
 
-        # if hasattr(poker_config, 'save'): poker_config.save()
+        # Сохраняем PokerConfig (если есть метод save)
+        if hasattr(poker_config, 'save') and callable(poker_config.save):
+             # Нужен метод save в PokerConfig
+             pass # poker_config.save()
 
 
     except Exception as e:
