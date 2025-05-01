@@ -9,7 +9,7 @@ import ray
 from ray import air, tune
 from ray.rllib.algorithms.ppo import PPOConfig
 from ray.rllib.models import ModelCatalog # <<< ИМПОРТ ДЛЯ РЕГИСТРАЦИИ
-from ray.tune.logger import pretty_print,బెటర్ Logger, TBXLoggerCallback # Добавим TensorBoard логгер
+from ray.tune.logger import pretty_print, Logger, TBXLoggerCallback # Добавим TensorBoard логгер
 # Импортируем конфиги и среду
 from config import PokerConfig, TrainingConfig
 from environment import PokerEnv
