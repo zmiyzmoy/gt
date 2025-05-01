@@ -10,7 +10,6 @@ from typing import Dict, Any, List
 class PokerConfig:
     # --- Параметры Игры (OpenSpiel) ---
     game_name: str = "universal_poker"
-    # Параметры для OpenSpiel 1.3 (ожидает строки или базовые типы)
     game_config: Dict[str, str] = field(default_factory=dict)
 
     # --- Параметры Среды ---
@@ -24,12 +23,9 @@ class PokerConfig:
         "custom_model": "AdvancedPokerModel",
         "fcnet_hiddens": [256, 256],
         "fcnet_activation": "relu",
-        # "use_lstm": False, # Настройки LSTM для модели, если она их использует
-        # "lstm_cell_size": 256,
     })
 
     def __post_init__(self):
-        # --- Заполнение game_config для OpenSpiel 1.3 ---
         if not self.game_config:
             self.game_config = {
                 "betting": "nolimit",
@@ -38,14 +34,13 @@ class PokerConfig:
                 "numSuits": "4",
                 "numRanks": "13",
                 "numHoleCards": "2",
-                "numBoardCards": "0 3 1 1", # Строка для списка
+                "numBoardCards": "0 3 1 1",
                 "stack": str(self.starting_stack),
-                "blind": f"{self.small_blind} {self.big_blind}" # Строка для списка
+                "blind": f"{self.small_blind} {self.big_blind}"
             }
-        # Дополнительно конвертируем все значения в строки для надежности с OpenSpiel 1.3
         temp_config = {}
         for k, v in self.game_config.items():
-            temp_config[k] = str(v)
+             temp_config[k] = str(v)
         self.game_config = temp_config
 
 
@@ -53,56 +48,53 @@ class PokerConfig:
 class TrainingConfig:
     # --- Общие параметры Эксперимента ---
     exp_name: str = f"poker_prod_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-    local_dir: str = "./ray_results" # Используем local_dir для Ray 2.10
+    local_dir: str = "./ray_results"
 
     # --- Параметры Обучения (для Ray Tune) ---
-    num_iterations: int = 1000 # Сколько итераций обучения проводить
-    checkpoint_freq: int = 25   # Как часто сохранять чекпоинт
-    keep_checkpoints_num: int = 3 # Сколько последних чекпоинтов хранить
+    num_iterations: int = 1000
+    checkpoint_freq: int = 25
+    keep_checkpoints_num: int = 3
     checkpoint_at_end: bool = True
 
     # --- Параметры Логирования ---
-    log_level: str = "INFO" # Уровень логов Ray RLlib (DEBUG, INFO, WARN, ERROR)
-    wandb_project: str = "poker_rl" # Оставляем W&B, убрали MLflow
+    log_level: str = "INFO"
+    wandb_project: str = "poker_rl"
 
     # --- Параметры Алгоритма PPO (для Ray RLlib PPOConfig v2.10) ---
     # Ресурсы
-    num_workers: int = 10  # -> num_rollout_workers в PPOConfig
-    num_gpus: int = 1     # -> num_gpus в PPOConfig.resources
-    num_cpus_per_worker: int = 1 # -> num_cpus_per_worker в PPOConfig.resources
-    num_gpus_per_worker: float = 0.0 # -> num_gpus_per_worker в PPOConfig.resources
-    num_envs_per_worker: int = 1 # -> num_envs_per_worker в PPOConfig.rollouts
+    num_workers: int = 10
+    num_gpus: int = 1
+    num_cpus_per_worker: int = 1
+    num_gpus_per_worker: float = 0.0
+    num_envs_per_worker: int = 1
 
     # Параметры обучения
     lr: float = 5e-5
     gamma: float = 0.99
-    lambda_: float = 0.95 # Параметр GAE
+    lambda_: float = 0.95
     clip_param: float = 0.2
     vf_loss_coeff: float = 0.5
     entropy_coeff: float = 0.01
     train_batch_size: int = 8192
     sgd_minibatch_size: int = 1024
-    num_sgd_iter: int = 10        # В PPOConfig 2.10 это num_sgd_iter
+    num_sgd_iter: int = 10
 
     # Параметры Rollout
-    rollout_fragment_length: int = 200 # В Ray 2.10 'auto' может не работать, ставим значение
+    rollout_fragment_length: str = "auto" # <--- ИЗМЕНЕНО ЗДЕСЬ!
     batch_mode: str = "truncate_episodes"
 
     # Параметры Evaluation
     evaluation_interval: int = 20
-    evaluation_duration: int = 10      # episodes
-    evaluation_num_workers: int = 1    # Используется в PPOConfig.evaluation
+    evaluation_duration: int = 10
+    evaluation_num_workers: int = 1
     evaluation_parallel_to_training: bool = True
 
     # Модель (ссылка на PokerConfig.model_config)
     model: Dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self):
-        # Связываем модель с PokerConfig
         if not self.model:
              poker_cfg = PokerConfig()
              self.model = poker_cfg.model_config
-
-        # Устанавливаем имя эксперимента для Tune на основе exp_name
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
         self.tune_exp_name = f"{self.exp_name}_{timestamp}"
