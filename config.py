@@ -63,7 +63,7 @@ class TrainingConfig:
 
     # --- Параметры Алгоритма PPO (для Ray RLlib PPOConfig v2.10) ---
     # Ресурсы
-    num_workers: int = 7 # <--- ИЗМЕНЕНО ЗДЕСЬ (было 9)
+    num_workers: int = 6 # <--- ИЗМЕНЕНО ЗДЕСЬ (было 7)
     num_gpus: int = 1
     num_cpus_per_worker: int = 1
     num_gpus_per_worker: float = 0.0
@@ -76,7 +76,7 @@ class TrainingConfig:
     clip_param: float = 0.2
     vf_loss_coeff: float = 0.5
     entropy_coeff: float = 0.01
-    train_batch_size: int = 8192 # Ray подстроит rollout_fragment_length
+    train_batch_size: int = 8192
     sgd_minibatch_size: int = 1024
     num_sgd_iter: int = 10
 
@@ -87,7 +87,7 @@ class TrainingConfig:
     # Параметры Evaluation
     evaluation_interval: int = 20
     evaluation_duration: int = 10
-    evaluation_num_workers: int = 1 # Отдельный воркер для оценки
+    evaluation_num_workers: int = 1
     evaluation_parallel_to_training: bool = True
 
     # Модель (ссылка на PokerConfig.model_config)
