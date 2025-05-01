@@ -14,7 +14,6 @@ from pathlib import Path
 # Импортируем наши модули
 from config import PokerConfig, TrainingConfig
 from environment import PokerEnv
-# Убедись, что models.py существует и содержит AdvancedPokerModel
 from models import AdvancedPokerModel
 
 # Настраиваем логирование
@@ -58,26 +57,24 @@ def train_poker():
         # Инициализируем конфигурации
         poker_config = PokerConfig()
         training_config = TrainingConfig()
-        # Связываем model_config
-        training_config.model = poker_config.model_config
+        training_config.model = poker_config.model_config # Связываем модель
 
         # Настраиваем W&B (если нужно)
         use_wandb = setup_wandb(training_config)
 
         # --- Инициализируем Ray ---
         available_cpus = os.cpu_count() or 12
-        num_workers = min(training_config.num_workers, available_cpus - 1)
+        # Корректируем num_workers на основе доступных CPU
+        num_workers = min(training_config.num_workers, available_cpus - 2) # -2: для драйвера и резерва
         if num_workers != training_config.num_workers:
-             logger.warning(f"Reduced num_workers from {training_config.num_workers} to {num_workers}")
+             logger.warning(f"Reduced num_workers from {training_config.num_workers} to {num_workers} based on available CPUs ({available_cpus})")
 
         ray.init(
-            num_cpus=num_workers + 1,
+            num_cpus=num_workers + 1, # Указываем точное кол-во CPU для Ray
             num_gpus=training_config.num_gpus,
             logging_level=logging.INFO,
             ignore_reinit_error=True
         )
-        # УБИРАЕМ СТРОКУ НИЖЕ, т.к. get_dashboard_url() нет в Ray 2.10
-        # logger.info(f"Ray initialized. Dashboard URL: {ray.get_dashboard_url()}")
         logger.info("Ray initialized. View dashboard at http://127.0.0.1:8265 (default address)")
 
 
@@ -103,7 +100,7 @@ def train_poker():
                 model=training_config.model
             )
             .rollouts(
-                num_rollout_workers=num_workers,
+                num_rollout_workers=num_workers, # Используем скорректированное значение
                 num_envs_per_worker=training_config.num_envs_per_worker,
                 rollout_fragment_length=training_config.rollout_fragment_length,
                 batch_mode=training_config.batch_mode
@@ -121,7 +118,7 @@ def train_poker():
                 evaluation_config={"explore": False}
             )
             .debugging(log_level=training_config.log_level)
-            # .callbacks(PokerCallbacks)
+            # .callbacks(PokerCallbacks) # Раскомментируй, если нужны твои колбэки
         )
         final_ppo_config = ppo_config_builder.to_dict()
         logger.info("PPOConfig configured.")
@@ -130,34 +127,33 @@ def train_poker():
         # --- Запускаем обучение с Ray Tune (classic API) ---
         logger.info(f"Starting Ray Tune experiment '{training_config.tune_exp_name}'...")
         local_dir_path = Path(training_config.local_dir)
-        storage_path = str(local_dir_path.parent.resolve()) # Родительская папка
-        exp_dir_name = local_dir_path.name # Имя папки эксперимента
+        # Tune ожидает родительскую папку в local_dir для классического API
+        storage_parent_path = str(local_dir_path.parent.resolve())
+        exp_dir_name = local_dir_path.name # Имя папки будет создано внутри storage_parent_path
 
-        logger.info(f"Results will be stored under: {storage_path}/{exp_dir_name}")
-        local_dir_path.mkdir(parents=True, exist_ok=True)
+        logger.info(f"Results will be stored under: {storage_parent_path}")
+        # Tune сам создаст папку эксперимента, не нужно делать mkdir
 
         tune_callbacks = []
         # if use_wandb:
         #      try:
-        #           # Попробуй импорт для Ray 2.10
-        #           # from ray.tune.integration.wandb import WandbLoggerCallback
-        #           from ray.tune.logger import WandbLogger # В 2.10 может быть просто WandbLogger
+        #           from ray.tune.logger import WandbLogger
         #           tune_callbacks.append(WandbLogger(project=training_config.wandb_project))
         #           logger.info("Using WandbLogger for Ray Tune.")
         #      except ImportError:
-        #           logger.warning("Could not import WandbLogger. W&B logging via Tune callback disabled.")
+        #           logger.warning("Could not import WandbLogger. W&B Tune callback disabled.")
 
         analysis = tune.run(
             "PPO",
-            name=exp_dir_name,
+            name=exp_dir_name, # Имя папки эксперимента
             config=final_ppo_config,
             stop={"training_iteration": training_config.num_iterations},
-            local_dir=storage_path,
+            local_dir=storage_parent_path, # Родительская папка для результатов
             checkpoint_freq=training_config.checkpoint_freq,
             checkpoint_at_end=training_config.checkpoint_at_end,
             keep_checkpoints_num=training_config.keep_checkpoints_num,
             verbose=1,
-            # fail_fast=True,
+            # fail_fast=True, # Можно раскомментировать
             # max_failures=0,
             # callbacks=tune_callbacks,
             # resume="AUTO"
@@ -170,14 +166,18 @@ def train_poker():
         best_trial = analysis.get_best_trial(metric="episode_reward_mean", mode="max", scope="last")
         if best_trial:
             best_checkpoint_dict = analysis.get_best_checkpoint(trial=best_trial, metric="episode_reward_mean", mode="max")
-            best_checkpoint_path = best_checkpoint_dict if isinstance(best_checkpoint_dict, str) else best_checkpoint_dict.get("filesystem", {}).get("path")
-
+            # --- ИСПРАВЛЕНИЕ AttributeError ---
+            if best_checkpoint_dict:
+                best_checkpoint_path = best_checkpoint_dict if isinstance(best_checkpoint_dict, str) else best_checkpoint_dict.get("filesystem", {}).get("path")
+                logger.info(f"Best checkpoint found at: {best_checkpoint_path}")
+                # TODO: Логирование лучшей модели в W&B
+                # if use_wandb and best_checkpoint_path:
+                #      hybrid_logger.log_model(best_checkpoint_path, "best_model_checkpoint")
+            else:
+                logger.warning("Could not find a best checkpoint for the best trial.")
+            # --- Конец исправления ---
             logger.info(f"Best trial final results: {best_trial.last_result}")
-            logger.info(f"Best checkpoint found at: {best_checkpoint_path}")
 
-            # TODO: Логирование лучшей модели в W&B
-            # if use_wandb and best_checkpoint_path:
-            #      hybrid_logger.log_model(best_checkpoint_path, "best_model_checkpoint")
         else:
              logger.warning("Could not determine the best trial based on 'episode_reward_mean'.")
 
