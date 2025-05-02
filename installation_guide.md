@@ -1,186 +1,137 @@
-# Руководство по установке покерного ИИ
+# Руководство по установке PokerRL
 
-Подробная инструкция по настройке окружения для обучения покерного ИИ с использованием RL.
+Данное руководство содержит инструкции по установке и настройке проекта PokerRL для обучения покерного агента с использованием Ray RLlib и OpenSpiel.
 
-## Базовая установка (Ubuntu/Debian)
+## Системные требования
 
-```bash
-# Обновление пакетов
-sudo apt update
-sudo apt upgrade -y
+- Python 3.10+
+- Минимум 8 ГБ RAM
+- Желательно наличие GPU (для ускорения обучения)
+- Ubuntu 20.04+ или другой Linux-дистрибутив
 
-# Установка необходимых системных пакетов
-sudo apt install -y python3-dev python3-pip git build-essential cmake
+## Установка зависимостей
 
-# Создание директории для проекта
-mkdir -p ~/poker_ai
-cd ~/poker_ai
-
-# Клонирование репозитория (если используете Git)
-git clone https://github.com/ваш_логин/имя_репозитория.git .
-# ИЛИ скопируйте файлы вручную
-
-# Создание виртуального окружения Python
-python3 -m venv poker_venv
-source poker_venv/bin/activate
-
-# Установка базовых зависимостей
-pip install -U pip setuptools wheel
-pip install numpy torch
-
-# Установка OpenSpiel
-pip install open_spiel==1.3
-
-# Установка остальных зависимостей
-pip install ray[rllib]==2.10.0 gymnasium==0.29.1 psutil
-
-# Проверка установки
-python test_env.py --episodes 1
-```
-
-## Установка с GPU (NVIDIA)
+### 1. Создание виртуального окружения
 
 ```bash
-# Убедитесь что у вас установлены драйверы NVIDIA
-nvidia-smi
-
-# Если драйверы отсутствуют, установите их
-sudo apt install -y nvidia-driver-XXX  # выберите актуальную версию
-
-# Установка CUDA (требуется для PyTorch с GPU)
-wget https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2004/x86_64/cuda-ubuntu2004.pin
-sudo mv cuda-ubuntu2004.pin /etc/apt/preferences.d/cuda-repository-pin-600
-sudo apt-key adv --fetch-keys https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2004/x86_64/7fa2af80.pub
-sudo add-apt-repository "deb https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2004/x86_64/ /"
-sudo apt update
-sudo apt install -y cuda
-
-# Установка PyTorch с поддержкой CUDA
-pip install torch==2.0.1+cu118 -f https://download.pytorch.org/whl/torch_stable.html
-
-# Установка остальных пакетов
-pip install ray[rllib]==2.10.0 gymnasium==0.29.1 open_spiel==1.3 psutil
+python3 -m venv poker_env
+source poker_env/bin/activate
 ```
 
-## Установка на Windows
+### 2. Установка OpenSpiel
 
-```powershell
-# Установка Python 3.10+ с официального сайта python.org
+OpenSpiel требует несколько системных зависимостей:
 
-# Создание виртуального окружения
-python -m venv poker_venv
-poker_venv\Scripts\activate
+```bash
+sudo apt-get update
+sudo apt-get install cmake clang build-essential python3-dev
+```
 
-# Установка базовых зависимостей
-pip install -U pip setuptools wheel
-pip install numpy
+Затем установите OpenSpiel через pip:
 
-# Установка PyTorch (CPU версия)
-pip install torch 
-
-# Для GPU версии:
-# pip install torch --index-url https://download.pytorch.org/whl/cu118
-
-# Установка OpenSpiel (может потребоваться установить CMake и VS Build Tools)
+```bash
 pip install open_spiel
+```
 
-# Установка остальных пакетов
-pip install ray[rllib]==2.10.0 gymnasium==0.29.1 psutil
+### 3. Установка основных библиотек
 
-# Проверка установки
+```bash
+pip install -r requirements.txt
+```
+
+Содержимое `requirements.txt`:
+
+```
+numpy>=1.24.0
+torch>=1.13.0
+ray[all]>=2.10.0
+gymnasium>=0.28.1
+wandb>=0.15.0
+matplotlib>=3.7.0
+psutil>=5.9.0
+```
+
+## Тестирование установки
+
+После установки всех зависимостей рекомендуется выполнить проверку окружения:
+
+```bash
+python debug.py
+```
+
+Если нет ошибок, можно перейти к тестированию покерного окружения:
+
+```bash
+python test_spiel_config.py
 python test_env.py --episodes 1
 ```
 
-## Конфигурация для разных мощностей оборудования
+## Особенности настройки для VPS
 
-### Слабое оборудование (CPU-only, < 8GB RAM)
+### CUDA и GPU
 
-В файле `config.py` измените следующие параметры:
-
-```python
-# TrainingConfig
-num_workers = 2                 # Уменьшаем число воркеров
-num_envs_per_worker = 1         # По одной среде на воркера
-train_batch_size = 1024         # Уменьшаем размер батча
-sgd_minibatch_size = 256        # Уменьшаем размер мини-батча
-num_sgd_iter = 5                # Меньше итераций SGD
-```
-
-### Среднее оборудование (CPU-only, 16GB RAM)
-
-```python
-# TrainingConfig
-num_workers = 4                 # Увеличиваем число воркеров
-num_envs_per_worker = 2         # Две среды на воркера
-train_batch_size = 2048         # Средний размер батча
-sgd_minibatch_size = 512        # Средний размер мини-батча
-```
-
-### Мощное оборудование (GPU, 32GB+ RAM)
-
-```python
-# TrainingConfig
-num_workers = 7                 # Много воркеров 
-num_gpus = 1                    # Использовать GPU
-num_envs_per_worker = 4         # Много сред на воркера
-train_batch_size = 8192         # Большой размер батча
-sgd_minibatch_size = 1024       # Большой размер мини-батча
-num_sgd_iter = 10               # Больше итераций SGD
-```
-
-## Мониторинг и Отладка
+Если вы используете GPU, убедитесь, что установлен CUDA toolkit:
 
 ```bash
-# Проверка использования памяти в процессе обучения
-python -m train_fixed.py --debug
-
-# Мониторинг использования GPU (для GPU тренировки)
-watch -n 1 nvidia-smi
-
-# Мониторинг использования CPU и памяти
-htop
-
-# Подключение к Ray Dashboard (сервер запускается автоматически)
-# Откройте в браузере http://localhost:8265
+# Проверка, доступен ли CUDA для PyTorch
+python -c "import torch; print(torch.cuda.is_available())"
 ```
 
-## Типичные проблемы и их решение
+### Настройка ресурсов Ray
 
-### Ошибка: CUDA out of memory
+Для оптимальной производительности на VPS, рекомендуется настроить параметры Ray в `config.py`:
 
-**Решение**: Уменьшите параметры батчей в конфигурации:
 ```python
-# TrainingConfig
-train_batch_size = 4096         # Уменьшить с 8192
-sgd_minibatch_size = 512        # Уменьшить с 1024
+# Для CPU-only
+num_workers: int = (CPU_COUNT - 1) or 1
+num_gpus: int = 0
+
+# Для GPU
+num_workers: int = (CPU_COUNT - 1) or 1
+num_gpus: int = 1
 ```
 
-### Ошибка: Ray crashes without error message
+## Решение проблем
 
-**Решение**: Проверьте доступную память и уменьшите количество воркеров:
+### Ошибка "Unknown parameter 'stackSize'"
+
+Если вы видите ошибку "Unknown parameter 'stackSize'", используйте исправленные версии файлов:
+
+- `environment_improved.py` вместо `environment.py` или `environment_fixed.py`
+- `models_improved.py` вместо `models.py` или `models_fixed.py`
+- `register_models_improved.py` вместо `register_models.py`
+
+### Ошибка при инициализации Ray 
+
+Если вы видите ошибку "module 'ray' has no attribute 'get_webui_url'", используйте версию `train_fixed.py` с исправленной инициализацией Ray.
+
+### Segmentation fault при создании покерной игры
+
+Проверьте правильность форматирования параметра `numBoardCards`:
+
 ```python
-# TrainingConfig
-num_workers = 2                 # Уменьшить
+# Правильный формат
+"numBoardCards": "0 3 1 1"  # или [0, 3, 1, 1] с последующим преобразованием в строку
 ```
 
-### Ошибка: Shape mismatch in model forward pass
+## Запуск обучения
 
-**Решение**: Убедитесь, что модель корректно обрабатывает входные размерности:
-1. Проверьте размер `self.obs_size` в `AdvancedPokerModel.__init__`
-2. Убедитесь, что среда возвращает наблюдения правильного размера
+После установки зависимостей и проверки окружения, запустите обучение:
 
-### Ошибка: ValueError: sample larger than population
-
-**Решение**: Проблема может быть в `sgd_minibatch_size` > `train_batch_size`:
-```python
-# TrainingConfig
-sgd_minibatch_size = 256        # Должно быть меньше train_batch_size
-train_batch_size = 1024         # Убедитесь что это значение больше
+```bash
+python train_fixed.py --iterations 1000
 ```
 
-## Дополнительные ресурсы
+Для мониторинга с Weights & Biases, сначала выполните логин:
 
-1. [Документация Ray RLlib](https://docs.ray.io/en/latest/rllib/index.html)
-2. [Документация OpenSpiel](https://github.com/deepmind/open_spiel)
-3. [Документация PyTorch](https://pytorch.org/docs/stable/index.html)
-4. [Статья о Proximal Policy Optimization (PPO)](https://arxiv.org/abs/1707.06347)
+```bash
+wandb login
+```
+
+## Дополнительная информация
+
+Для получения дополнительной информации обратитесь к документации:
+
+- [Ray RLlib](https://docs.ray.io/en/latest/rllib/index.html)
+- [OpenSpiel](https://github.com/deepmind/open_spiel)
+- [PyTorch](https://pytorch.org/docs/stable/index.html)
