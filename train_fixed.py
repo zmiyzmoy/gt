@@ -159,7 +159,7 @@ def setup_ray(log_level="INFO"):
             ignore_reinit_error=True,
         )
         
-        logger.info(f"Ray initialized successfully. Dashboard URL: {ray.get_webui_url()}")
+        logger.info("Ray initialized successfully.")
         return True
     except Exception as e:
         logger.error(f"Failed to initialize Ray: {e}")

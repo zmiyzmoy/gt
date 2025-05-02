@@ -204,7 +204,7 @@ class PokerEnv(gym.Env):
             "blind": f"{self.small_blind} {self.big_blind}",
             "raiseSize": "100 100 200 400",  # Для limit
             "maxRaises": "3 4 4 4",  # Максимальное количество рейзов по улицам
-            "stackSize": self.starting_stack,
+            "stack": self.starting_stack,
         }
         
         # Обновление из внешней конфигурации

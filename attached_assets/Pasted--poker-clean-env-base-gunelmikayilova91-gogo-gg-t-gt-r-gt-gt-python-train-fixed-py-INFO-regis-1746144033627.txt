@@ -1,0 +1,197 @@
+(poker_clean_env) (base) gunelmikayilova91@gogo:~/gg/t/gt/r/gt/gt$ python train_fixed.py
+INFO:register_models:Registering custom models...
+INFO:register_models:Models registered successfully
+INFO:main:Starting training process
+INFO:main:Starting train_poker with memory usage: 520.97 MB
+2025-05-01 23:59:01,388 INFO worker.py:1752 -- Started a local Ray instance.
+ERROR:main:Failed to initialize Ray: module 'ray' has no attribute 'get_webui_url'
+ERROR:main:Traceback (most recent call last):
+  File "/home/gunelmikayilova91/gg/t/gt/r/gt/gt/train_fixed.py", line 162, in setup_ray
+    logger.info(f"Ray initialized successfully. Dashboard URL: {ray.get_webui_url()}")
+  File "/home/gunelmikayilova91/gg/poker_clean_env/lib/python3.10/site-packages/ray/__init__.py", line 284, in __getattr__
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+AttributeError: module 'ray' has no attribute 'get_webui_url'
+
+ERROR:main:Failed to initialize Ray. Exiting.
+INFO:main:Finished train_poker in 3.66 seconds
+INFO:main:Memory usage: 556.46 MB (delta: 35.48 MB)
+INFO:main:Training completed successfully
+(poker_clean_env) (base) gunelmikayilova91@gogo:~/gg/t/gt/r/gt/gt$ python debug.py
+2025-05-01 23:59:29,804 - poker_debug - INFO - Checking dependencies...
+2025-05-01 23:59:29,808 - poker_debug - INFO - ==================================================
+2025-05-01 23:59:29,808 - poker_debug - INFO - Poker RL System Diagnostics
+2025-05-01 23:59:29,808 - poker_debug - INFO - ==================================================
+2025-05-01 23:59:29,808 - poker_debug - INFO - 
+--- Checking Dependencies ---
+2025-05-01 23:59:29,949 - poker_debug - INFO - ✓ numpy version 1.24.3
+2025-05-01 23:59:30,204 - poker_debug - INFO - ✓ ray version 2.10.0
+2025-05-01 23:59:31,420 - poker_debug - INFO - ✓ torch version 2.0.1+cu117
+2025-05-01 23:59:31,456 - poker_debug - WARNING - ✗ gymnasium version 0.28.1 is below recommended 0.29.1
+2025-05-01 23:59:31,468 - poker_debug - INFO - ✓ pyspiel version Unknown
+2025-05-01 23:59:31,469 - poker_debug - INFO - ✓ open_spiel version Unknown
+2025-05-01 23:59:32,461 - poker_debug - INFO - ✓ wandb version 0.19.10
+2025-05-01 23:59:32,462 - poker_debug - WARNING - Not all dependencies are properly installed!
+2025-05-01 23:59:32,462 - poker_debug - INFO - 
+--- Checking System Info ---
+2025-05-01 23:59:32,462 - poker_debug - INFO - System Information:
+2025-05-01 23:59:32,462 - poker_debug - INFO - OS: Linux 5.10.0-34-cloud-amd64
+2025-05-01 23:59:32,462 - poker_debug - INFO - Python: 3.10.15
+2025-05-01 23:59:32,462 - poker_debug - INFO - Memory: 83.48 GB total, 81.81 GB available
+2025-05-01 23:59:32,463 - poker_debug - INFO - CPU: 6 physical cores, 12 logical cores
+2025-05-01 23:59:32,463 - poker_debug - INFO - NVIDIA driver: NVRM version: NVIDIA UNIX Open Kernel Module for x86_64  550.90.07  Release Build  (dvs-builder@U16-I2-C05-15-3)  Fri May 31 09:44:37 UTC 2024
+GCC version:  gcc version 10.2.1 20210110 (Debian 10.2.1-6)
+2025-05-01 23:59:32,463 - poker_debug - INFO - Disk: 147.40 GB total, 80.49 GB free
+2025-05-01 23:59:32,463 - poker_debug - INFO - 
+--- Checking GPU ---
+2025-05-01 23:59:32,625 - poker_debug - INFO - PyTorch CUDA available: True
+2025-05-01 23:59:32,652 - poker_debug - INFO - GPU count: 1
+2025-05-01 23:59:32,655 - poker_debug - INFO - GPU 0: NVIDIA A100-SXM4-40GB
+2025-05-01 23:59:32,656 - poker_debug - INFO - GPU 0 memory: 39.38 GB total, 0.00 GB reserved, 0.00 GB allocated
+2025-05-01 23:59:32,656 - poker_debug - INFO - 
+--- Testing Ray ---
+2025-05-01 23:59:35,485 INFO worker.py:1752 -- Started a local Ray instance.
+2025-05-01 23:59:35,845 - poker_debug - INFO - Ray initialized with resources: {'GPU': 1.0, 'accelerator_type:A100': 1.0, 'node:10.128.0.12': 1.0, 'node:__internal_head__': 1.0, 'memory': 52886264219.0, 'CPU': 1.0, 'object_store_memory': 26443132108.0}
+2025-05-01 23:59:36,391 - poker_debug - INFO - Ray actor test: pong from gogo
+2025-05-01 23:59:37,296 - poker_debug - INFO - Ray test completed and shut down successfully
+2025-05-01 23:59:37,297 - poker_debug - INFO - 
+--- Testing OpenSpiel ---
+2025-05-01 23:59:37,311 - poker_debug - INFO - OpenSpiel registered games count: 101
+2025-05-01 23:59:37,311 - poker_debug - INFO - Found universal_poker game: universal_poker
+2025-05-01 23:59:37,311 - poker_debug - INFO - Default parameters: True
+2025-05-01 23:59:37,312 - poker_debug - INFO - Test game created successfully: universal_poker(betting=nolimit,blind=1 2,numBoardCards=0 3 1 1,numPlayers=2,numRounds=4,stack=1000 1000)
+2025-05-01 23:59:37,312 - absl - INFO - Using game instance: universal_poker
+2025-05-01 23:59:37,315 - poker_debug - INFO - RL environment created, initial state: 0
+2025-05-01 23:59:37,315 - poker_debug - INFO - 
+--- Testing Custom Environment ---
+2025-05-01 23:59:37,319 - poker_debug - INFO - Testing custom poker environment...
+2025-05-01 23:59:37,319 - absl - INFO - Using game settings: {'numPlayers': 8, 'betting': 'nolimit', 'numRounds': 4, 'numSuits': 4, 'numRanks': 13, 'numHoleCards': 2, 'numBoardCards': '0 3 1 1', 'blind': '50 100 0 0 0 0 0 0', 'raiseSize': '100 100 200 400', 'maxRaises': '3 4 4 4', 'stackSize': 10000, 'stack': [10000, 10000, 10000, 10000, 10000, 10000, 10000, 10000]}
+2025-05-01 23:59:37,324 - poker_debug - ERROR - Custom environment test error: cannot convert dictionary update sequence element #0 to a sequence
+Traceback (most recent call last):
+  File "/home/gunelmikayilova91/gg/t/gt/r/gt/gt/debug.py", line 224, in test_custom_environment
+    env = PokerEnv(env_config)
+  File "/home/gunelmikayilova91/gg/t/gt/r/gt/gt/environment_fixed.py", line 217, in __init__
+    self.game = rl_environment.Environment(self.game_name, **self._process_game_params(self.game_config))
+  File "/home/gunelmikayilova91/gg/poker_clean_env/lib/python3.10/site-packages/open_spiel/python/rl_environment.py", line 180, in __init__
+    self._game = pyspiel.load_game(game, game_settings)
+TypeError: cannot convert dictionary update sequence element #0 to a sequence
+2025-05-01 23:59:37,326 - poker_debug - INFO - 
+--- Testing Model ---
+2025-05-01 23:59:38,389 - poker_debug - INFO - Testing model definition...
+2025-05-01 23:59:38,390 - poker_debug - ERROR - Model test error: int() argument must be a string, a bytes-like object or a real number, not 'NoneType'
+Traceback (most recent call last):
+  File "/home/gunelmikayilova91/gg/t/gt/r/gt/gt/debug.py", line 264, in test_model
+    model = AdvancedPokerModel(
+  File "/home/gunelmikayilova91/gg/t/gt/r/gt/gt/models_fixed.py", line 35, in __init__
+    self.obs_size = int(np.product(obs_space.shape))
+TypeError: int() argument must be a string, a bytes-like object or a real number, not 'NoneType'
+2025-05-01 23:59:38,390 - poker_debug - INFO - 
+--- Testing Config ---
+2025-05-01 23:59:38,390 - poker_debug - INFO - PokerConfig loaded: universal_poker, 8 players
+2025-05-01 23:59:38,391 - poker_debug - INFO - TrainingConfig loaded: batch size 8192, lr 5e-05
+2025-05-01 23:59:38,391 - poker_debug - INFO - Checking if config is too resource-intensive...
+2025-05-01 23:59:38,391 - poker_debug - INFO - 
+--- Checking for Memory Leaks ---
+2025-05-01 23:59:38,391 - poker_debug - INFO - Initial memory usage: 556.37 MB
+2025-05-01 23:59:39,516 - poker_debug - INFO - Memory after GC: 556.37 MB
+2025-05-01 23:59:40,116 - poker_debug - INFO - Final memory usage: 563.98 MB
+2025-05-01 23:59:40,116 - poker_debug - INFO - No obvious memory leak detected
+2025-05-01 23:59:40,116 - poker_debug - INFO - 
+--- Generating Resource Recommendations ---
+2025-05-01 23:59:40,116 - poker_debug - INFO - PyTorch CUDA available: True
+2025-05-01 23:59:40,117 - poker_debug - INFO - GPU count: 1
+2025-05-01 23:59:40,117 - poker_debug - INFO - GPU 0: NVIDIA A100-SXM4-40GB
+2025-05-01 23:59:40,117 - poker_debug - INFO - GPU 0 memory: 39.38 GB total, 0.00 GB reserved, 0.00 GB allocated
+2025-05-01 23:59:40,117 - poker_debug - ERROR - Error generating recommendations: '<' not supported between instances of 'str' and 'int'
+2025-05-01 23:59:40,117 - poker_debug - INFO - 
+--- Diagnostics Summary ---
+2025-05-01 23:59:40,117 - poker_debug - INFO - Check the debug.log file for detailed information
+2025-05-01 23:59:40,117 - poker_debug - INFO - If issues persist, try running with reduced resources using the recommendations
+(poker_clean_env) (base) gunelmikayilova91@gogo:~/gg/t/gt/r/gt/gt$ python test_env.py --episodes 1
+INFO:env_test:=== Poker Environment Testing Suite ===
+INFO:env_test:
+=== Testing OpenSpiel Directly ===
+INFO:env_test:Testing OpenSpiel universal_poker game directly...
+INFO:env_test:Game created successfully: universal_poker(betting=nolimit,blind=50 100,numBoardCards=0 3 1 1,numHoleCards=2,numPlayers=2,numRanks=13,numRounds=4,numSuits=4,stack=10000 10000)
+INFO:env_test:Initial state: BettingAbstration: FCPA
+P0 Cards: 
+P1 Cards: 
+BoardCards 
+PossibleCardsToDeal AsAhAdAcKsKhKdKcQsQhQdQcJsJhJdJcTsThTdTc9s9h9d9c8s8h8d8c7s7h7d7c6s6h6d6c5s5h5d5c4s4h4d4c3s3h3d3c2s2h2d2c
+Node type?: Chance node
+PossibleActions (1): [ ACTION_DEAL ]
+Round: 0
+ACPC State: STATE:0::2c2c|2c2c
+Spent: [P0: 50  P1: 100  ]
+
+Action Sequence: 
+INFO:env_test:Applied chance action: 15
+INFO:env_test:Applied chance action: 7
+INFO:env_test:Applied chance action: 27
+INFO:env_test:Applied chance action: 50
+INFO:env_test:Current player: 0
+INFO:env_test:Legal actions: [0, 1, 2, 3]
+INFO:env_test:
+=== Testing OpenSpiel RL Environment ===
+INFO:env_test:Testing OpenSpiel RL environment...
+INFO:absl:Using game instance: universal_poker
+INFO:env_test:RL environment created successfully
+INFO:env_test:Reset successful, current player: 0
+INFO:env_test:Current player after chance: 0
+INFO:env_test:Legal actions: [0, 1, 2, 3]
+INFO:env_test:Took action 3, rewards: [0.0, 0.0]
+INFO:env_test:
+=== Testing Custom Poker Environment ===
+INFO:env_test:Testing custom PokerEnv environment...
+INFO:env_test:Testing with 2 players...
+INFO:absl:Using game settings: {'numPlayers': 2, 'betting': 'limit', 'numRounds': 4, 'numSuits': 4, 'numRanks': 13, 'numHoleCards': 2, 'numBoardCards': '0 3 1 1', 'blind': '50 100', 'raiseSize': '100 100 200 400', 'maxRaises': '3 4 4 4', 'stackSize': 10000}
+OpenSpiel exception: Unknown parameter 'stackSize'. Available parameters are: betting, bettingAbstraction, blind, boardCards, firstPlayer, gamedef, handReaches, maxRaises, numBoardCards, numHoleCards, numPlayers, numRanks, numRounds, numSuits, potSize, raiseSize, stack
+ERROR:env_test:Custom environment test failed: Unknown parameter 'stackSize'. Available parameters are: betting, bettingAbstraction, blind, boardCards, firstPlayer, gamedef, handReaches, maxRaises, numBoardCards, numHoleCards, numPlayers, numRanks, numRounds, numSuits, potSize, raiseSize, stack
+ERROR:env_test:Traceback (most recent call last):
+  File "/home/gunelmikayilova91/gg/t/gt/r/gt/gt/test_env.py", line 203, in test_custom_environment
+    env = PokerEnv(env_config)
+  File "/home/gunelmikayilova91/gg/t/gt/r/gt/gt/environment_fixed.py", line 217, in __init__
+    self.game = rl_environment.Environment(self.game_name, **self._process_game_params(self.game_config))
+  File "/home/gunelmikayilova91/gg/poker_clean_env/lib/python3.10/site-packages/open_spiel/python/rl_environment.py", line 180, in __init__
+    self._game = pyspiel.load_game(game, game_settings)
+pyspiel.SpielError: Unknown parameter 'stackSize'. Available parameters are: betting, bettingAbstraction, blind, boardCards, firstPlayer, gamedef, handReaches, maxRaises, numBoardCards, numHoleCards, numPlayers, numRanks, numRounds, numSuits, potSize, raiseSize, stack
+
+INFO:env_test:
+=== Testing Memory Usage ===
+INFO:env_test:Testing observation memory usage...
+INFO:absl:Using game settings: {'numPlayers': 2, 'betting': 'limit', 'numRounds': 4, 'numSuits': 4, 'numRanks': 13, 'numHoleCards': 2, 'numBoardCards': '0 3 1 1', 'blind': '50 100', 'raiseSize': '100 100 200 400', 'maxRaises': '3 4 4 4', 'stackSize': 10000}
+OpenSpiel exception: Unknown parameter 'stackSize'. Available parameters are: betting, bettingAbstraction, blind, boardCards, firstPlayer, gamedef, handReaches, maxRaises, numBoardCards, numHoleCards, numPlayers, numRanks, numRounds, numSuits, potSize, raiseSize, stack
+ERROR:env_test:Memory test failed: Unknown parameter 'stackSize'. Available parameters are: betting, bettingAbstraction, blind, boardCards, firstPlayer, gamedef, handReaches, maxRaises, numBoardCards, numHoleCards, numPlayers, numRanks, numRounds, numSuits, potSize, raiseSize, stack
+ERROR:env_test:Traceback (most recent call last):
+  File "/home/gunelmikayilova91/gg/t/gt/r/gt/gt/test_env.py", line 264, in test_observation_memory
+    env = PokerEnv(env_config)
+  File "/home/gunelmikayilova91/gg/t/gt/r/gt/gt/environment_fixed.py", line 217, in __init__
+    self.game = rl_environment.Environment(self.game_name, **self._process_game_params(self.game_config))
+  File "/home/gunelmikayilova91/gg/poker_clean_env/lib/python3.10/site-packages/open_spiel/python/rl_environment.py", line 180, in __init__
+    self._game = pyspiel.load_game(game, game_settings)
+pyspiel.SpielError: Unknown parameter 'stackSize'. Available parameters are: betting, bettingAbstraction, blind, boardCards, firstPlayer, gamedef, handReaches, maxRaises, numBoardCards, numHoleCards, numPlayers, numRanks, numRounds, numSuits, potSize, raiseSize, stack
+
+INFO:env_test:
+=== Testing Multiple Environments ===
+INFO:env_test:Testing 4 environments in parallel...
+INFO:absl:Using game settings: {'numPlayers': 2, 'betting': 'limit', 'numRounds': 4, 'numSuits': 4, 'numRanks': 13, 'numHoleCards': 2, 'numBoardCards': '0 3 1 1', 'blind': '50 100', 'raiseSize': '100 100 200 400', 'maxRaises': '3 4 4 4', 'stackSize': 10000}
+OpenSpiel exception: Unknown parameter 'stackSize'. Available parameters are: betting, bettingAbstraction, blind, boardCards, firstPlayer, gamedef, handReaches, maxRaises, numBoardCards, numHoleCards, numPlayers, numRanks, numRounds, numSuits, potSize, raiseSize, stack
+ERROR:env_test:Multi-environment test failed: Unknown parameter 'stackSize'. Available parameters are: betting, bettingAbstraction, blind, boardCards, firstPlayer, gamedef, handReaches, maxRaises, numBoardCards, numHoleCards, numPlayers, numRanks, numRounds, numSuits, potSize, raiseSize, stack
+ERROR:env_test:Traceback (most recent call last):
+  File "/home/gunelmikayilova91/gg/t/gt/r/gt/gt/test_env.py", line 332, in test_multi_environment
+    env = PokerEnv(env_config)
+  File "/home/gunelmikayilova91/gg/t/gt/r/gt/gt/environment_fixed.py", line 217, in __init__
+    self.game = rl_environment.Environment(self.game_name, **self._process_game_params(self.game_config))
+  File "/home/gunelmikayilova91/gg/poker_clean_env/lib/python3.10/site-packages/open_spiel/python/rl_environment.py", line 180, in __init__
+    self._game = pyspiel.load_game(game, game_settings)
+pyspiel.SpielError: Unknown parameter 'stackSize'. Available parameters are: betting, bettingAbstraction, blind, boardCards, firstPlayer, gamedef, handReaches, maxRaises, numBoardCards, numHoleCards, numPlayers, numRanks, numRounds, numSuits, potSize, raiseSize, stack
+
+INFO:env_test:
+=== Test Summary ===
+INFO:env_test:openspiel_direct: PASSED
+INFO:env_test:openspiel_rl_env: PASSED
+INFO:env_test:custom_env: FAILED
+INFO:env_test:memory_test: FAILED
+INFO:env_test:multi_env: FAILED
+ERROR:env_test:
+❌ Some tests failed. Review the logs and fix issues before training.
+(poker_clean_env) (base) gunelmikayilova91@gogo:~/gg/t/gt/r/gt/gt$ 
